@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>截屏快传 · 电脑接收端</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="shell topbar-content">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true"><span></span></span>
+        <span>截屏快传</span>
+      </div>
+      <span class="status" id="receiver-status" data-state="loading" role="status">正在连接接收端</span>
+    </div>
+  </header>
+
+  <main class="shell">
+    <div class="intro">
+      <h1>电脑接收端</h1>
+      <p>手机和电脑连接到同一个局域网后，用下方信息配对手机。</p>
+    </div>
+
+    <div class="settings">
+      <section class="card pairing" aria-labelledby="pairing-heading">
+        <h2 id="pairing-heading">配对手机</h2>
+        <div class="field">
+          <label for="server-address">接收地址</label>
+          <div class="field-controls">
+            <select class="value" id="server-address" disabled>
+              <option value="">正在获取地址</option>
+            </select>
+            <button type="button" id="copy-address" disabled>复制地址</button>
+          </div>
+        </div>
+        <div class="field">
+          <label for="pairing-code">配对码</label>
+          <div class="field-controls">
+            <div class="code-control">
+              <input class="value" id="pairing-code" type="password" readonly autocomplete="off" spellcheck="false" placeholder="正在获取配对码">
+              <button type="button" class="toggle-code" id="toggle-code" aria-label="显示配对码" aria-controls="pairing-code" disabled>显示</button>
+            </div>
+            <button type="button" id="copy-code" disabled>复制配对码</button>
+          </div>
+        </div>
+        <p class="feedback" id="pairing-feedback" role="status"></p>
+      </section>
+
+      <section class="card destination" aria-labelledby="destination-heading">
+        <span class="folder-mark" aria-hidden="true"><span class="folder-icon"></span></span>
+        <h2 id="destination-heading">保存位置</h2>
+        <p class="folder-path" id="folder-path" dir="auto">正在获取保存位置</p>
+        <button type="button" class="open-folder" id="open-folder" disabled>打开文件夹<span aria-hidden="true">↗</span></button>
+        <p class="feedback" id="folder-feedback" role="status"></p>
+      </section>
+    </div>
+
+    <section class="card activity" aria-labelledby="activity-heading">
+      <div class="activity-header">
+        <h2 id="activity-heading">最近接收</h2>
+        <span class="file-count" id="file-count" hidden></span>
+      </div>
+      <div class="empty" id="empty-state">
+        <div class="empty-mark" aria-hidden="true"><span class="file-icon"></span></div>
+        <p class="empty-title" id="empty-title">正在读取接收记录</p>
+        <p class="empty-description" id="empty-description">连接接收端后会自动更新。</p>
+      </div>
+      <ul class="files" id="recent-files" hidden></ul>
+    </section>
+    <footer class="footer" id="version" hidden></footer>
+  </main>
+</body>
+</html>

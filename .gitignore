@@ -1,0 +1,7 @@
+.DS_Store
+/dist/
+/desktop/ScreenRelay
+/desktop/ScreenRelay.exe
+/ios/DerivedData/
+xcuserdata/
+*.xcuserstate

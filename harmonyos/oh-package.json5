@@ -1,0 +1,10 @@
+{
+  "name": "screenrelay",
+  "version": "1.0.0",
+  "description": "Transfer screenshots and screen recordings to a computer on the local network.",
+  "main": "",
+  "author": "",
+  "license": "UNLICENSED",
+  "dependencies": {},
+  "devDependencies": {}
+}
