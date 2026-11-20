@@ -1,0 +1,42 @@
+name: Build Android APK
+
+'on':
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install Android SDK components
+        run: sdkmanager --sdk_root="$ANDROID_HOME" 'platforms;android-35' 'build-tools;34.0.0'
+
+      - name: Build Android debug APK
+        working-directory: android
+        run: ./gradlew --no-daemon --console=plain :app:assembleDebug
+
+      - name: Verify APK signature
+        run: |
+          apk=android/app/build/outputs/apk/debug/app-debug.apk
+          "$ANDROID_HOME/build-tools/34.0.0/apksigner" verify --verbose "$apk"
+          cp "$apk" "$RUNNER_TEMP/ScreenRelay-Android-debug.apk"
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: screenrelay-android-apk
+          path: ${{ runner.temp }}/ScreenRelay-Android-debug.apk
+          if-no-files-found: error
+          compression-level: 0

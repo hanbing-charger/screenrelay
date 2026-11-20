@@ -1,0 +1,58 @@
+name: Build iOS IPA
+'on':
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Archive the arm64 iOS app without signing
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild -version
+          xcodebuild \
+            -project ios/ScreenRelay.xcodeproj \
+            -scheme ScreenRelay \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/ScreenRelay.xcarchive" \
+            ARCHS=arm64 ONLY_ACTIVE_ARCH=NO SKIP_INSTALL=NO \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY= \
+            archive
+
+      - name: Package the unsigned device IPA
+        shell: bash
+        run: |
+          set -euo pipefail
+          app="$RUNNER_TEMP/ScreenRelay.xcarchive/Products/Applications/ScreenRelay.app"
+          test -f "$app/ScreenRelay"
+          test "$(xcrun lipo -archs "$app/ScreenRelay")" = arm64
+          test "$(plutil -extract DTPlatformName raw -o - "$app/Info.plist")" = iphoneos
+          test ! -e "$app/_CodeSignature"
+          test ! -e "$app/embedded.mobileprovision"
+
+          staging="$(mktemp -d "$RUNNER_TEMP/screenrelay-ipa.XXXXXX")"
+          mkdir -p "$staging/Payload"
+          ditto "$app" "$staging/Payload/ScreenRelay.app"
+          ipa="$RUNNER_TEMP/ScreenRelay-unsigned.ipa"
+          (cd "$staging" && /usr/bin/zip -q -r "$ipa" Payload)
+          unzip -tq "$ipa"
+
+      - name: Upload the unsigned IPA
+        uses: actions/upload-artifact@v6
+        with:
+          name: screenrelay-ios-unsigned-ipa
+          path: ${{ runner.temp }}/ScreenRelay-unsigned.ipa
+          if-no-files-found: error
+          compression-level: 0
