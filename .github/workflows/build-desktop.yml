@@ -1,0 +1,61 @@
+name: Build Desktop Receivers
+'on':
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Upload the ZIPs to an existing draft release (optional)"
+        type: string
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.27.4"
+          cache: false
+
+      - name: Test the receiver
+        working-directory: desktop
+        run: go test ./...
+
+      - name: Build and package all desktop variants
+        run: python3 desktop/packaging/package.py "$RUNNER_TEMP/screenrelay-desktop"
+
+      - name: Upload build artifacts
+        if: inputs.release_tag == ''
+        uses: actions/upload-artifact@v6
+        with:
+          name: screenrelay-desktop
+          path: ${{ runner.temp }}/screenrelay-desktop/*.zip
+          if-no-files-found: error
+
+      - name: Upload ZIPs to the draft release
+        if: inputs.release_tag != ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          if [[ $(gh release view --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft -- "$RELEASE_TAG") != true ]]; then
+            echo "::error::Choose an existing draft release."
+            exit 1
+          fi
+          archive_dir="$RUNNER_TEMP/screenrelay-desktop"
+          gh release upload --repo "$GITHUB_REPOSITORY" -- "$RELEASE_TAG" \
+            "$archive_dir/ScreenRelay-macOS-arm64.zip#Mac · Apple 芯片（ARM64）" \
+            "$archive_dir/ScreenRelay-macOS-x64.zip#Mac · Intel 芯片（x64）" \
+            "$archive_dir/ScreenRelay-Windows-x64.zip#Windows · x64" \
+            "$archive_dir/ScreenRelay-Windows-arm64.zip#Windows · ARM64"
