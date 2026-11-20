@@ -4,6 +4,8 @@
 
 ## 电脑端
 
+[下载 Mac 和 Windows 接收器](https://github.com/hanbing-charger/screenrelay/releases/tag/desktop-v0.1.0)
+
 1. 解压与电脑对应的接收器包。Apple 芯片 Mac 选 macOS-arm64，Intel Mac 选 macOS-x64。常见 Windows 电脑选 Windows-x64，ARM 版 Windows 选 Windows-arm64。
 2. Mac 双击「启动截屏快传.command」，Windows 双击「ScreenRelay.exe」。如果防火墙询问，允许在私人网络接收。构建未做商业签名或 Apple 公证，首次启动时系统可能要求在安全设置里确认来源。
 3. 浏览器会打开电脑控制台。复制其中的**电脑地址**和**配对码**到手机。若显示多个地址，选手机所在 Wi-Fi 对应的网卡地址。
