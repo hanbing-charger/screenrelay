@@ -43,16 +43,24 @@ export async function requestMediaAccess(context: common.UIAbilityContext): Prom
 export async function getNewCaptures(context: common.UIAbilityContext, since: number): Promise<Capture[]> {
   const agent = photoAccessHelper.getPhotoAccessHelper(context)
   const predicates = new dataSharePredicates.DataSharePredicates()
-  predicates.greaterThanOrEqualTo(photoAccessHelper.PhotoKeys.DATE_ADDED_MS, since)
+  predicates.orderByDesc(photoAccessHelper.PhotoKeys.DATE_ADDED_MS)
   const options: photoAccessHelper.FetchOptions = {
-    fetchColumns: [],
+    fetchColumns: [photoAccessHelper.PhotoKeys.DATE_ADDED_MS],
     predicates: predicates
   }
   const result = await agent.getAssets(options)
   try {
     const captures: Capture[] = []
-    const assets = await result.getAllObjects()
-    for (const asset of assets) {
+    const count = result.getCount()
+    for (let index = 0; index < count; index++) {
+      const asset = await result.getObjectByPosition(index)
+      const added = asset.get(photoAccessHelper.PhotoKeys.DATE_ADDED_MS)
+      if (typeof added !== 'number') {
+        continue
+      }
+      if (added < since) {
+        break
+      }
       const kind = captureKind(asset.displayName, asset.photoType)
       if (kind !== undefined) {
         captures.push({ uri: asset.uri, filename: asset.displayName, kind: kind })

@@ -22,6 +22,8 @@ const SCAN_INTERVAL_MS = 6000
 const MAX_RETRY_DELAY_MS = 5 * 60 * 1000
 
 export class Relay {
+  private readonly context: common.UIAbilityContext
+  private readonly onChange: (status: RelayStatus) => void
   private store: RelayStorage
   private state: SavedState
   private foreground: boolean = false
@@ -30,7 +32,9 @@ export class Relay {
   private blockedEndpoint: string = ''
   private message: string = '输入电脑上的接收地址和配对令牌。'
 
-  constructor(private context: common.UIAbilityContext, private onChange: (status: RelayStatus) => void) {
+  constructor(context: common.UIAbilityContext, onChange: (status: RelayStatus) => void) {
+    this.context = context
+    this.onChange = onChange
     this.store = new RelayStorage(context.filesDir)
     this.state = this.store.load()
   }
