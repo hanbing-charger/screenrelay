@@ -155,6 +155,8 @@ select.value:disabled, input.value::placeholder { color: #5a6b64; opacity: 1; }
 .file-type-icon > span { position: relative; width: 16px; height: 13px; border: 1.4px solid currentColor; border-radius: 3px; overflow: hidden; }
 .file-type-icon[data-kind="screenshot"] > span::after { content: ""; position: absolute; left: 3px; top: 5px; width: 9px; height: 9px; border: 1.4px solid currentColor; transform: rotate(45deg); }
 .file-type-icon[data-kind="screen-recording"] > span::after { content: ""; position: absolute; left: 5px; top: 2px; border: solid transparent; border-width: 3.5px 0 3.5px 5px; border-left-color: currentColor; }
+.file-type-icon[data-kind="diagnostic"] > span { width: 13px; height: 16px; }
+.file-type-icon[data-kind="diagnostic"] > span::after { content: ""; position: absolute; left: 2px; top: 4px; width: 6px; height: 4px; border-block: 1px solid currentColor; }
 .file-info { flex: 1; min-width: 0; }
 .file-name { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .92rem; font-weight: 620; }
 .file-details { display: flex; flex-wrap: wrap; column-gap: 9px; row-gap: 4px; margin-top: 5px; color: var(--muted); font-size: .78rem; }

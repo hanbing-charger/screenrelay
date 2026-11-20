@@ -423,11 +423,17 @@ async function requestFileShare(url, payload) {
   }
 }
 
+const fileKindLabels = new Map([
+  ["screenshot", "截图"],
+  ["screen-recording", "录屏"],
+  ["diagnostic", "诊断日志"],
+]);
+
 function createFileRow(file) {
   const row = document.createElement("li");
   row.className = "file-row";
 
-  const kind = file.kind === "screen-recording" ? "screen-recording" : "screenshot";
+  const kind = fileKindLabels.has(file.kind) ? file.kind : "";
   const icon = document.createElement("span");
   icon.className = "file-type-icon";
   icon.dataset.kind = kind;
@@ -444,7 +450,7 @@ function createFileRow(file) {
   const details = document.createElement("div");
   details.className = "file-details";
   const type = document.createElement("span");
-  type.textContent = kind === "screen-recording" ? "录屏" : "截图";
+  type.textContent = fileKindLabels.get(kind) ?? "文件";
   details.append(type);
   const size = getFileSize(file.size);
   if (size) {
@@ -465,18 +471,21 @@ function createFileRow(file) {
   if (typeof file.url === "string" && /^\/files\/[a-zA-Z0-9._-]+$/.test(file.url)) {
     const actions = document.createElement("div");
     actions.className = "file-actions";
-    const view = document.createElement("a");
-    view.href = file.url;
-    view.target = "_blank";
-    view.rel = "noopener";
-    view.textContent = "查看";
-    view.setAttribute("aria-label", `查看 ${file.name}`);
+    if (kind !== "diagnostic") {
+      const view = document.createElement("a");
+      view.href = file.url;
+      view.target = "_blank";
+      view.rel = "noopener";
+      view.textContent = "查看";
+      view.setAttribute("aria-label", `查看 ${file.name}`);
+      actions.append(view);
+    }
     const download = document.createElement("a");
     download.href = `${file.url}?download=1`;
     download.download = file.name;
     download.textContent = "下载";
     download.setAttribute("aria-label", `下载 ${file.name}`);
-    actions.append(view, download);
+    actions.append(download);
     row.append(actions);
   }
   return row;
@@ -484,7 +493,7 @@ function createFileRow(file) {
 
 function updateFiles(files) {
   elements.emptyTitle.textContent = "暂无接收记录";
-  elements.emptyDescription.textContent = "手机上传的截图和录屏会显示在这里。";
+  elements.emptyDescription.textContent = "手机上传的截图、录屏和诊断日志会显示在这里。";
   const snapshot = JSON.stringify(files);
   if (snapshot === previousFiles) return;
   previousFiles = snapshot;

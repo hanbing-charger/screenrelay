@@ -188,6 +188,10 @@ public final class MainActivity extends Activity {
         });
         add(page, retry, 6);
 
+        Button diagnostics = button("诊断日志", false);
+        diagnostics.setOnClickListener(view -> startActivity(new Intent(this, DiagnosticActivity.class)));
+        add(page, diagnostics, 12);
+
         add(page, text("请让手机和电脑连接同一可信 Wi-Fi，并保持电脑接收端运行。系统限制后台任务时，上传可能延迟。",
                 13, SECONDARY, false), 16);
         return scroll;

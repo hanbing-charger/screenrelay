@@ -4,7 +4,7 @@
 
 ## 电脑端
 
-[下载 Mac 和 Windows 接收器](https://github.com/hanbing-charger/screenrelay/releases/tag/v0.5.0)
+[下载 Mac 和 Windows 接收器](https://github.com/hanbing-charger/screenrelay/releases/tag/v0.6.0)
 
 1. 解压与电脑对应的接收器包。Apple 芯片 Mac 选 macOS-arm64，Intel Mac 选 macOS-x64。常见 Windows 电脑选 Windows-x64，ARM 版 Windows 选 Windows-arm64。
 2. Mac 双击「启动截屏快传.command」，Windows 双击「ScreenRelay.exe」。如果防火墙询问，允许在私人网络接收。构建未做商业签名或 Apple 公证，首次启动时系统可能要求在安全设置里确认来源。
@@ -14,7 +14,7 @@
 
 ## 手机端
 
-[下载 Android APK、iOS IPA 和鸿蒙 HAP](https://github.com/hanbing-charger/screenrelay/releases/tag/v0.5.0)
+[下载 Android APK、iOS IPA 和鸿蒙 HAP](https://github.com/hanbing-charger/screenrelay/releases/tag/v0.6.0)
 
 手机和电脑连同一个 Wi-Fi。在 Android、iOS 或 HarmonyOS NEXT 端点**扫码配对**，扫描电脑面板上的二维码。二维码有效期内可给多台手机使用，每台手机的配对会单独保存，电脑面板会列出已配对设备。也可以手动填写地址和配对码。授予所需权限并开启同步后，先截一张图或录一段视频验证。截图和录屏需要先保存到系统相册。自动同步从首次开启时开始收集。鸿蒙应用可手动选择相册中的文件。
 
@@ -39,6 +39,12 @@
 | HarmonyOS NEXT | 应用的接收文件目录，可用应用里的导出入口保存到系统位置 |
 
 电脑面板的 **扫码配对** 用来添加手机。**文件下载码** 用来下载所选文件。下载支持断线后接着传，原文件应在下载完成前保留在电脑上。
+
+## 上传 Android 诊断日志
+
+在 Android 端打开 **诊断日志**，可以查看截屏快传最近 24 小时内的崩溃（Crash）和无响应（ANR）记录。应用将可用记录生成独立的 TXT。勾选一份或多份，在页面里点上传。升级电脑接收端至 v0.6.0 后，可以在接收列表里查看「诊断日志」，原文件保存在当前接收目录的 `日期/diagnostic` 下。
+
+Android 11 及以上可以读取系统保留的本应用崩溃和 ANR。Android 10 支持记录本应用的 Java 崩溃。诊断 TXT 仅在用户选中并点击上传后发送。
 
 ## 连接与保存
 

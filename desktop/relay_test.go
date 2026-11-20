@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"mime"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -106,6 +107,65 @@ func TestUploadAndReplayAfterRestart(t *testing.T) {
 	}
 	if retry := sendCapture(service, "device.capture-1", name, "screenshot", payload); retry.Code != http.StatusCreated {
 		t.Fatalf("retry for removed file returned %d", retry.Code)
+	}
+}
+
+func TestDiagnosticUploadAndDownloadAfterRestart(t *testing.T) {
+	folder := t.TempDir()
+	service := testRelay(t, folder)
+	name := "Crash-测试.TXT"
+	payload := []byte("<script>alert('text only')</script>\n崩溃日志\n")
+	upload := func(service *relay, kind, name, mediaType string, length int64) *httptest.ResponseRecorder {
+		request := httptest.NewRequest(http.MethodPost, "/api/v1/uploads", bytes.NewReader(payload))
+		request.ContentLength = length
+		request.Header.Set("Authorization", "Bearer "+service.token)
+		request.Header.Set("Content-Type", mediaType)
+		request.Header.Set("X-Filename", url.PathEscape(name))
+		request.Header.Set("X-Media-Kind", kind)
+		request.Header.Set("X-Upload-Id", "device.diagnostic-1")
+		response := httptest.NewRecorder()
+		service.phoneAPI().ServeHTTP(response, request)
+		return response
+	}
+	length := int64(len(payload))
+	for _, tc := range []struct {
+		name, kind, mediaType string
+		length                int64
+		want                  int
+	}{
+		{"Crash-report.html", diagnosticKind, "text/plain", length, http.StatusUnsupportedMediaType},
+		{name, diagnosticKind, "text/html", length, http.StatusUnsupportedMediaType},
+		{name, "screenshot", "text/plain", length, http.StatusUnsupportedMediaType},
+		{name, diagnosticKind, "text/plain; charset=utf-8", length, http.StatusCreated},
+	} {
+		if response := upload(service, tc.kind, tc.name, tc.mediaType, tc.length); response.Code != tc.want {
+			t.Fatalf("upload %q as %s/%s: got %d, want %d: %s", tc.name, tc.kind, tc.mediaType,
+				response.Code, tc.want, response.Body)
+		}
+	}
+	service.maxBytes = 2 * maxDiagnosticBytes
+	if response := upload(service, diagnosticKind, name, "text/plain", maxDiagnosticBytes+1); response.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("oversize diagnostic upload got %d: %s", response.Code, response.Body)
+	}
+
+	service = testRelay(t, folder)
+	if retry := upload(service, diagnosticKind, name, "text/plain", length); retry.Code != http.StatusOK {
+		t.Fatalf("diagnostic retry got %d: %s", retry.Code, retry.Body)
+	}
+	status := localRequest(service, "/api/status")
+	var dashboard dashboardStatus
+	if err := json.Unmarshal(status.Body.Bytes(), &dashboard); err != nil {
+		t.Fatal(err)
+	}
+	if len(dashboard.Recent) != 1 || dashboard.Recent[0].Kind != diagnosticKind || dashboard.Recent[0].Name != name {
+		t.Fatalf("unexpected diagnostic history: %+v", dashboard.Recent)
+	}
+	response := localRequest(service, dashboard.Recent[0].URL)
+	disposition, params, err := mime.ParseMediaType(response.Header().Get("Content-Disposition"))
+	if response.Code != http.StatusOK || err != nil || disposition != "attachment" || params["filename"] != name ||
+		response.Header().Get("Content-Type") != "text/plain; charset=utf-8" ||
+		response.Header().Get("X-Content-Type-Options") != "nosniff" || !bytes.Equal(response.Body.Bytes(), payload) {
+		t.Fatalf("unexpected diagnostic download: %d, %v, %q", response.Code, response.Header(), response.Body)
 	}
 }
 

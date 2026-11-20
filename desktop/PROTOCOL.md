@@ -2,11 +2,12 @@
 
 电脑上传服务默认监听 IPv4 TCP 8765。电脑控制台使用独立的本地端口，手机端应使用控制台显示的局域网地址。
 
-- `GET /api/v1/health` 返回 `200` 和 `{"status":"ok","version":"0.5.0"}`，用于检查接收器地址是否可达。
-- `POST /api/v1/uploads` 上传原始文件字节，需指定 `Content-Length`。文件名使用 RFC 3986 UTF-8 百分号编码后放入 `X-Filename`，类型放入 `X-Media-Kind`（`screenshot` 或 `screen-recording`），将扫码配对得到的令牌或手动配对码放入 `Authorization: Bearer <token>`。建议设置实际 `Content-Type`。
+- `GET /api/v1/health` 返回 `200` 和 `{"status":"ok","version":"0.6.0"}`，用于检查接收器地址是否可达。
+- `POST /api/v1/uploads` 上传原始文件字节，需指定 `Content-Length`。文件名使用 RFC 3986 UTF-8 百分号编码后放入 `X-Filename`，类型放入 `X-Media-Kind`（`screenshot`、`screen-recording` 或 `diagnostic`），将扫码配对得到的令牌或手动配对码放入 `Authorization: Bearer <token>`。建议设置实际 `Content-Type`。
+- `diagnostic` 接收扩展名为 `.txt` 的日志，上传时使用 `Content-Type: text/plain; charset=utf-8`。单份日志最大 1 MiB，也受接收端配置的上传上限约束。电脑控制台以「诊断日志」显示，可下载原始文件。
 - `X-Upload-Id` 可提供设备内稳定、设备间唯一的重试标识，支持 1 至 128 个 ASCII 字符 `A–Z a–z 0–9 . _ -`。
 - 返回 `201` 表示保存完成，`200` 表示同一个 ID 对应的同一文件已保存。响应为 JSON，含 `id` 和 `name`。
-- `401` 表示配对码错误，`409` 表示同一个 ID 已用于其他文件，`411` 表示缺少长度，`413` 表示超过文件上限，`415` 表示扩展名与支持的类型不符。网络错误和 `5xx` 可用同一个上传 ID 重试。接收端在上传连续 90 秒无数据时返回可重试的 `503`，连续发送的文件仍可使用 45 分钟的总上传时限。
+- `401` 表示配对码错误，`409` 表示同一个 ID 已用于其他文件，`411` 表示缺少长度，`413` 表示超过文件上限，`415` 表示扩展名或诊断日志的 `Content-Type` 与支持的类型不符。网络错误和 `5xx` 可用同一个上传 ID 重试。接收端在上传连续 90 秒无数据时返回可重试的 `503`，连续发送的文件仍可使用 45 分钟的总上传时限。
 
 ## 扫码配对
 

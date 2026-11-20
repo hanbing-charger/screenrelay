@@ -21,8 +21,11 @@ import (
 )
 
 const (
-	uploadDuration = 45 * time.Minute
-	uploadIdleTime = 90 * time.Second
+	uploadDuration     = 45 * time.Minute
+	uploadIdleTime     = 90 * time.Second
+	diagnosticKind     = "diagnostic"
+	diagnosticType     = "text/plain"
+	maxDiagnosticBytes = 1 << 20
 )
 
 type uploadStream struct {
@@ -98,6 +101,19 @@ func (s *relay) upload(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "unknown X-Media-Kind")
 		return
 	}
+	maxBytes := s.maxBytes
+	if kind == diagnosticKind {
+		maxBytes = min(s.maxBytes, maxDiagnosticBytes)
+		if r.ContentLength > maxBytes {
+			writeError(w, http.StatusRequestEntityTooLarge, "diagnostic exceeds configured size limit")
+			return
+		}
+		contentType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+		if err != nil || contentType != diagnosticType {
+			writeError(w, http.StatusUnsupportedMediaType, "diagnostic must use Content-Type: text/plain")
+			return
+		}
+	}
 	rawName, err := url.PathUnescape(r.Header.Get("X-Filename"))
 	name := sanitizeName(rawName)
 	if err != nil || name == "" {
@@ -125,7 +141,7 @@ func (s *relay) upload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	stream := &uploadStream{
-		body:       http.MaxBytesReader(w, r.Body, s.maxBytes),
+		body:       http.MaxBytesReader(w, r.Body, maxBytes),
 		connection: http.NewResponseController(w),
 		hardLimit:  time.Now().Add(uploadDuration),
 	}
@@ -153,7 +169,7 @@ func (s *relay) upload(w http.ResponseWriter, r *http.Request) {
 }
 
 func validKind(kind string) bool {
-	return kind == "screenshot" || kind == "screen-recording"
+	return kind == "screenshot" || kind == "screen-recording" || kind == diagnosticKind
 }
 
 var screenshotTypes = map[string]string{
@@ -170,10 +186,17 @@ var recordingTypes = map[string]string{
 
 func captureMediaType(name, kind string) string {
 	ext := strings.ToLower(filepath.Ext(name))
-	if kind == "screenshot" {
+	switch kind {
+	case "screenshot":
 		return screenshotTypes[ext]
+	case "screen-recording":
+		return recordingTypes[ext]
+	case diagnosticKind:
+		if ext == ".txt" {
+			return diagnosticType + "; charset=utf-8"
+		}
 	}
-	return recordingTypes[ext]
+	return ""
 }
 
 type recentFile struct {
