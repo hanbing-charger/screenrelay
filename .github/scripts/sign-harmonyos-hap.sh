@@ -46,7 +46,7 @@ signed_name=screenrelay-harmonyos-signed.hap
 signed_hap="$work_dir/$signed_name"
 key_password=${HARMONY_KEY_PASSWORD:-$HARMONY_KEYSTORE_PASSWORD}
 if ! java -jar "$sign_tool" sign-app \
-  -mode localSign -signAlg SHA256withECDSA -signCode 1 \
+  -mode localSign -signAlg SHA256withECDSA -compatibleVersion 12 -signCode 1 \
   -keyAlias "$HARMONY_KEY_ALIAS" -keystoreFile "$work_dir/key.p12" \
   -keystorePwd "$HARMONY_KEYSTORE_PASSWORD" -keyPwd "$key_password" \
   -appCertFile "$work_dir/certificate.cer" -profileFile "$work_dir/profile.p7b" \
@@ -57,7 +57,7 @@ if ! java -jar "$sign_tool" sign-app \
 fi
 
 if ! java -jar "$sign_tool" verify-app \
-  -inFile "$signed_hap" -inForm zip -outCertchain "$work_dir/certchain.cer" \
+  -inFile "$signed_hap" -inForm zip -outCertChain "$work_dir/certchain.cer" \
   -outProfile "$work_dir/verified-profile.p7b" > "$work_dir/verifier.log" 2>&1; then
   echo "::error::Huawei signature verification failed."
   exit 1
@@ -69,11 +69,11 @@ if [[ ${HARMONY_REPO_PRIVATE:-false} == true ]]; then
   mv -- "$signed_hap" "$artifact_path"
 else
   artifact_path="$artifact_dir/screenrelay-harmonyos-signed.7z"
-  if ! command -v 7z >/dev/null; then
+  if ! archive_tool=$(command -v 7z || command -v 7zz); then
     echo "::error::7-Zip is required to protect signed packages in public repositories."
     exit 1
   fi
-  if ! (cd "$work_dir" && 7z a -t7z -mhe=on -mx=0 \
+  if ! (cd "$work_dir" && "$archive_tool" a -t7z -mhe=on -mx=0 \
     "-p$HARMONY_ARTIFACT_PASSWORD" "$artifact_path" "$signed_name") > "$work_dir/archive.log" 2>&1; then
     echo "::error::Could not encrypt the signed HAP artifact."
     exit 1
