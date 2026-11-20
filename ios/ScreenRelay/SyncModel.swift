@@ -22,7 +22,7 @@ final class SyncModel: ObservableObject {
     }
 
     @Published private var state = SavedState()
-    @Published private(set) var permission = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+    @Published private(set) var permission = LibraryPermission.current()
     @Published private(set) var lastStatus = "请先配对电脑。"
     @Published private(set) var pending = 0
     @Published private(set) var running = false
@@ -164,13 +164,13 @@ final class SyncModel: ObservableObject {
     }
 
     func requestPermission() async {
-        _ = await PHPhotoLibrary.requestAuthorization(for: .readWrite)
+        await LibraryPermission.request()
         refreshPermission()
         startScan()
     }
 
     private func refreshPermission() {
-        permission = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+        permission = LibraryPermission.current()
         let canRead = permission == .authorized || permission == .limited
         if canRead && !observing {
             PHPhotoLibrary.shared().register(observer)

@@ -24,7 +24,7 @@ import (
 	"time"
 )
 
-const version = "0.2.0"
+const version = "0.3.0"
 
 //go:embed ui/index.html ui/style.css ui/app.js
 var dashboard embed.FS
@@ -104,7 +104,7 @@ func run() error {
 	}
 	uploadServer := &http.Server{
 		Handler: service.phoneAPI(), ReadHeaderTimeout: 8 * time.Second,
-		ReadTimeout: 45 * time.Minute, WriteTimeout: 46 * time.Minute,
+		ReadTimeout: uploadDuration, WriteTimeout: uploadDuration + time.Minute,
 		IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10,
 	}
 	adminServer := &http.Server{

@@ -1,6 +1,38 @@
 import Foundation
+import MobileCoreServices
 import Photos
 import UniformTypeIdentifiers
+
+enum LibraryPermission: Equatable {
+    case notDetermined
+    case denied
+    case limited
+    case authorized
+
+    static func current() -> Self {
+        let status: PHAuthorizationStatus
+        if #available(iOS 14, *) {
+            status = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+            if status == .limited { return .limited }
+        } else {
+            status = PHPhotoLibrary.authorizationStatus()
+        }
+        if status == .authorized { return .authorized }
+        if status == .notDetermined { return .notDetermined }
+        return .denied
+    }
+
+    static func request() async {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            let complete: (PHAuthorizationStatus) -> Void = { _ in continuation.resume() }
+            if #available(iOS 14, *) {
+                PHPhotoLibrary.requestAuthorization(for: .readWrite, handler: complete)
+            } else {
+                PHPhotoLibrary.requestAuthorization(complete)
+            }
+        }
+    }
+}
 
 enum CaptureKind: String {
     case screenshot
@@ -14,7 +46,14 @@ struct Capture {
 
     var filename: String { resource.originalFilename }
     var mimeType: String {
-        UTType(resource.uniformTypeIdentifier)?.preferredMIMEType ?? "application/octet-stream"
+        let identifier = resource.uniformTypeIdentifier
+        if #available(iOS 14, *) {
+            return UTType(identifier)?.preferredMIMEType ?? "application/octet-stream"
+        }
+        if let type = UTTypeCopyPreferredTagWithClass(identifier as CFString, kUTTagClassMIMEType) {
+            return type.takeRetainedValue() as String
+        }
+        return "application/octet-stream"
     }
 
     func export(to url: URL) async throws {
@@ -50,15 +89,17 @@ enum CaptureLibrary {
         options.predicate = NSPredicate(format: "creationDate >= %@", start as NSDate)
         options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: true)]
 
-        let albums = PHAssetCollection.fetchAssetCollections(
-            with: .smartAlbum,
-            subtype: .smartAlbumScreenRecordings,
-            options: nil
-        )
         var recordings = Set<String>()
-        albums.enumerateObjects { album, _, _ in
-            PHAsset.fetchAssets(in: album, options: options).enumerateObjects { asset, _, _ in
-                recordings.insert(asset.localIdentifier)
+        if #available(iOS 14, *) {
+            let albums = PHAssetCollection.fetchAssetCollections(
+                with: .smartAlbum,
+                subtype: .smartAlbumScreenRecordings,
+                options: nil
+            )
+            albums.enumerateObjects { album, _, _ in
+                PHAsset.fetchAssets(in: album, options: options).enumerateObjects { asset, _, _ in
+                    recordings.insert(asset.localIdentifier)
+                }
             }
         }
 

@@ -1,56 +1,62 @@
 import AVFoundation
+import Combine
 import SwiftUI
 import UIKit
 
+@MainActor
 struct PairQRCodeSheet: View {
     let onRead: (String) -> Void
 
-    @Environment(\.dismiss) private var dismiss
-    @Environment(\.openURL) private var openURL
-    @Environment(\.scenePhase) private var phase
+    @Environment(\.presentationMode) private var presentationMode
     @State private var permission = AVCaptureDevice.authorizationStatus(for: .video)
     @State private var cameraUnavailable = false
 
     var body: some View {
-        NavigationStack {
+        NavigationView {
             VStack(spacing: 16) {
                 switch permission {
                 case .authorized where !cameraUnavailable:
                     QRScannerPreview(onRead: onRead, onFailure: { cameraUnavailable = true })
                         .aspectRatio(1, contentMode: .fit)
                         .clipShape(RoundedRectangle(cornerRadius: 16))
-                        .accessibilityLabel("二维码相机取景器")
+                        .accessibility(label: Text("二维码相机取景器"))
                     Text("将相机对准电脑接收端的配对二维码。")
-                        .foregroundStyle(.secondary)
+                        .foregroundColor(.secondary)
                 case .denied:
                     Text("扫码配对需要相机权限。")
                     Button("打开设置") {
-                        if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
+                        if let url = URL(string: UIApplication.openSettingsURLString) {
+                            UIApplication.shared.open(url)
+                        }
                     }
                 case .notDetermined:
-                    ProgressView("正在等待相机授权…")
+                    HStack {
+                        ActivityIndicator().frame(width: 24, height: 24)
+                        Text("正在等待相机授权…")
+                    }
                 default:
                     Text("相机当前不可用。可返回手动填写电脑地址和配对码。")
                         .multilineTextAlignment(.center)
                 }
             }
             .padding()
-            .navigationTitle("扫描二维码")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("取消") { dismiss() }
+            .navigationBarTitle("扫描二维码", displayMode: .inline)
+            .navigationBarItems(leading:
+                Button("取消") {
+                    presentationMode.wrappedValue.dismiss()
+                }
+            )
+        }
+        .navigationViewStyle(StackNavigationViewStyle())
+        .onAppear {
+            if permission == .notDetermined {
+                AVCaptureDevice.requestAccess(for: .video) { _ in
+                    DispatchQueue.main.async { refreshPermission() }
                 }
             }
         }
-        .task {
-            if permission == .notDetermined {
-                _ = await AVCaptureDevice.requestAccess(for: .video)
-                refreshPermission()
-            }
-        }
-        .onChange(of: phase) { phase in
-            if phase == .active { refreshPermission() }
+        .onReceive(NotificationCenter.default.publisher(for: UIScene.didActivateNotification)) { _ in
+            refreshPermission()
         }
     }
 

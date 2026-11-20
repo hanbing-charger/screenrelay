@@ -17,10 +17,16 @@ import (
 	"unicode/utf8"
 )
 
-const stateDirectory = ".screenrelay"
+const (
+	stateDirectory   = ".screenrelay"
+	uploadBufferSize = 256 * 1024
+)
+
+var uploadBuffers = sync.Pool{New: func() any { return new([uploadBufferSize]byte) }}
 
 var errIDConflict = errors.New("upload ID already belongs to a different file")
 var errIncomplete = errors.New("body length did not match Content-Length")
+var errUploadTimeout = errors.New("upload stopped receiving data")
 
 type capture struct {
 	ID         string    `json:"id"`
@@ -107,9 +113,15 @@ func (s *captureStore) save(body io.Reader, length int64, uploadID, name, kind s
 	}
 	defer os.Remove(file.Name())
 	hash := sha256.New()
-	written, copyErr := io.Copy(io.MultiWriter(file, hash), body)
+	buffer := uploadBuffers.Get().(*[uploadBufferSize]byte)
+	written, copyErr := io.CopyBuffer(io.MultiWriter(file, hash), body, buffer[:])
+	uploadBuffers.Put(buffer)
 	if copyErr != nil || written != length {
 		file.Close()
+		var timeout interface{ Timeout() bool }
+		if errors.As(copyErr, &timeout) && timeout.Timeout() {
+			return capture{}, false, errUploadTimeout
+		}
 		var pathErr *os.PathError
 		if errors.As(copyErr, &pathErr) {
 			return capture{}, false, copyErr

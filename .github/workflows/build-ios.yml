@@ -7,8 +7,10 @@ permissions:
 
 jobs:
   build:
-    runs-on: macos-latest
+    runs-on: macos-26
     timeout-minutes: 20
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
 
     steps:
       - uses: actions/checkout@v5
@@ -39,8 +41,15 @@ jobs:
           test -f "$app/ScreenRelay"
           test "$(xcrun lipo -archs "$app/ScreenRelay")" = arm64
           test "$(plutil -extract DTPlatformName raw -o - "$app/Info.plist")" = iphoneos
+          test "$(plutil -extract MinimumOSVersion raw -o - "$app/Info.plist")" = 13.0
+          minimum="$(xcrun vtool -show-build "$app/ScreenRelay" | awk '$1 == "minos" { print $2 }')"
+          if [[ "$minimum" != 13.0 && "$minimum" != 13.0.0 ]]; then
+            echo "::error::The executable minimum iOS version must be 13.0 (got $minimum)."
+            exit 1
+          fi
           test ! -e "$app/_CodeSignature"
           test ! -e "$app/embedded.mobileprovision"
+          test -f "$app/Frameworks/libswift_Concurrency.dylib"
 
           staging="$(mktemp -d "$RUNNER_TEMP/screenrelay-ipa.XXXXXX")"
           mkdir -p "$staging/Payload"

@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func testRelay(t *testing.T, folder string) *relay {
@@ -188,5 +190,48 @@ func TestConcurrentDuplicateUploads(t *testing.T) {
 	}
 	if created != 1 || len(service.store.recent(40)) != 1 {
 		t.Fatalf("expected one committed capture, got %d", created)
+	}
+}
+
+type readTimeout struct{}
+
+func (readTimeout) Read([]byte) (int, error) { return 0, os.ErrDeadlineExceeded }
+
+type uploadDeadlineRecorder struct {
+	*httptest.ResponseRecorder
+	receivedDeadline time.Time
+}
+
+func (r *uploadDeadlineRecorder) SetReadDeadline(value time.Time) error {
+	r.receivedDeadline = value
+	return nil
+}
+
+func TestStalledUploadCanRetryWithSameID(t *testing.T) {
+	service := testRelay(t, t.TempDir())
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/uploads", nil)
+	request.Body = io.NopCloser(io.MultiReader(strings.NewReader("part"), readTimeout{}))
+	request.ContentLength = 8
+	request.Header.Set("Authorization", "Bearer "+service.token)
+	request.Header.Set("X-Filename", "fresh.mp4")
+	request.Header.Set("X-Media-Kind", "screen-recording")
+	request.Header.Set("X-Upload-Id", "stalled-capture")
+	response := &uploadDeadlineRecorder{ResponseRecorder: httptest.NewRecorder()}
+	service.phoneAPI().ServeHTTP(response, request)
+
+	if response.Code != http.StatusServiceUnavailable || response.Header().Get("Retry-After") != "5" {
+		t.Fatalf("stalled upload was not retryable: %d %s", response.Code, response.Body)
+	}
+	if delay := time.Until(response.receivedDeadline); delay < uploadIdleTime-time.Second || delay > uploadIdleTime {
+		t.Fatalf("unbounded or incorrect upload idle deadline: %s", delay)
+	}
+	files, err := os.ReadDir(service.store.state)
+	if err != nil || len(files) != 0 {
+		t.Fatalf("timed out upload left data behind: %v %v", files, err)
+	}
+
+	retry := sendCapture(service, "stalled-capture", "fresh.mp4", "screen-recording", []byte("complete"))
+	if retry.Code != http.StatusCreated || len(service.store.recent(40)) != 1 {
+		t.Fatalf("could not commit the retried upload: %d %s", retry.Code, retry.Body)
 	}
 }

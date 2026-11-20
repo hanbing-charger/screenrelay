@@ -7,19 +7,21 @@ import java.io.IOException;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ExecutorService;
 import java.util.function.BooleanSupplier;
+import java.util.function.Consumer;
 
 final class SyncEngine {
     private static final ExecutorService WORKER = Executors.newSingleThreadExecutor();
 
     private SyncEngine() {}
 
-    static void submit(Context context, BooleanSupplier cancelled, Runnable finished) {
+    static void submit(Context context, BooleanSupplier cancelled, Consumer<Boolean> finished) {
         Context app = context.getApplicationContext();
         WORKER.execute(() -> {
+            boolean moreReady = false;
             try {
-                run(app, cancelled);
+                moreReady = run(app, cancelled);
             } finally {
-                finished.run();
+                finished.accept(moreReady);
             }
         });
     }
@@ -29,17 +31,17 @@ final class SyncEngine {
         WORKER.execute(() -> SyncStore.get(app).retry());
     }
 
-    private static void run(Context context, BooleanSupplier stopped) {
+    private static boolean run(Context context, BooleanSupplier stopped) {
         Settings settings = new Settings(context);
         int revision = settings.revision();
         BooleanSupplier cancelled = () -> stopped.getAsBoolean() || !settings.isEnabled()
                 || settings.revision() != revision;
         if (cancelled.getAsBoolean()) {
-            return;
+            return false;
         }
         if (!Settings.hasMediaAccess(context)) {
             settings.setStatus("需要允许访问所有照片和视频才能自动上传。");
-            return;
+            return false;
         }
         Settings.Configuration configuration = settings.configuration();
         SyncStore store = SyncStore.get(context);
@@ -49,7 +51,7 @@ final class SyncEngine {
             if (!cancelled.getAsBoolean()) {
                 settings.setStatus("暂时无法读取系统相册，下次会重试。");
             }
-            return;
+            return false;
         }
 
         for (int i = 0; i < 16 && !cancelled.getAsBoolean(); i++) {
@@ -58,12 +60,13 @@ final class SyncEngine {
                 if (store.counts().waiting() == 0 && store.counts().failed() == 0) {
                     settings.setStatus("正在等待新的截屏和录屏。");
                 }
-                return;
+                return false;
             }
             if (!send(context, settings, configuration, store, item, cancelled)) {
-                return;
+                return false;
             }
         }
+        return !cancelled.getAsBoolean() && store.next(System.currentTimeMillis()) != null;
     }
 
     private static boolean send(Context context, Settings settings, Settings.Configuration configuration,

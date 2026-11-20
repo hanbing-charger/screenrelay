@@ -60,7 +60,7 @@ public final class SyncJob extends JobService {
         int id = parameters.getJobId();
         AtomicBoolean cancelled = new AtomicBoolean();
         runs.put(id, cancelled);
-        SyncEngine.submit(this, cancelled::get, () -> main.post(() -> {
+        SyncEngine.submit(this, cancelled::get, ignored -> main.post(() -> {
             if (runs.get(id) != cancelled) {
                 return;
             }

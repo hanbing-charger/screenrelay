@@ -4,6 +4,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
+	"io"
 	"log"
 	"mime"
 	"net"
@@ -16,6 +17,33 @@ import (
 	"strings"
 	"time"
 )
+
+const (
+	uploadDuration = 45 * time.Minute
+	uploadIdleTime = 90 * time.Second
+)
+
+type uploadStream struct {
+	body       io.Reader
+	connection *http.ResponseController
+	hardLimit  time.Time
+	refreshAt  time.Time
+}
+
+func (s *uploadStream) Read(p []byte) (int, error) {
+	now := time.Now()
+	if !now.Before(s.refreshAt) {
+		deadline := now.Add(uploadIdleTime)
+		if s.hardLimit.Before(deadline) {
+			deadline = s.hardLimit
+		}
+		// Some wrapped response writers do not expose the connection deadline.
+		// The server-level timeout still applies to those requests.
+		_ = s.connection.SetReadDeadline(deadline)
+		s.refreshAt = now.Add(time.Second)
+	}
+	return s.body.Read(p)
+}
 
 type relay struct {
 	store         *captureStore
@@ -91,9 +119,16 @@ func (s *relay) upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	record, created, err := s.store.save(http.MaxBytesReader(w, r.Body, s.maxBytes),
-		r.ContentLength, uploadID, name, kind)
+	stream := &uploadStream{
+		body:       http.MaxBytesReader(w, r.Body, s.maxBytes),
+		connection: http.NewResponseController(w),
+		hardLimit:  time.Now().Add(uploadDuration),
+	}
+	record, created, err := s.store.save(stream, r.ContentLength, uploadID, name, kind)
 	switch {
+	case errors.Is(err, errUploadTimeout):
+		w.Header().Set("Retry-After", "5")
+		writeError(w, http.StatusServiceUnavailable, err.Error())
 	case errors.Is(err, errIDConflict):
 		writeError(w, http.StatusConflict, err.Error())
 	case errors.Is(err, errIncomplete):

@@ -7,6 +7,7 @@ import { scanPairingCode } from './Pairing'
 import { RelayStorage } from './Storage'
 import type { SavedState, UploadItem } from './Storage'
 import { checkReceiver, normalizeEndpoint, pairReceiver, sendCapture } from './Transport'
+import type { UploadResponse } from './Transport'
 
 export interface RelayStatus {
   endpoint: string
@@ -31,6 +32,7 @@ export class Relay {
   private timer: number = -1
   private running: boolean = false
   private blockedEndpoint: string = ''
+  private receiverRetryAt: number = 0
   private message: string = '配对电脑后即可发送截图和录屏。'
 
   constructor(context: common.UIAbilityContext, onChange: (status: RelayStatus) => void) {
@@ -91,6 +93,7 @@ export class Relay {
     const sameReceiver = this.state.endpoint === endpoint
     this.commit(endpoint, token, sameReceiver ? this.state.autoSince : 0, this.resetItemsFor(endpoint))
     this.blockedEndpoint = ''
+    this.receiverRetryAt = 0
     this.notify('已保存电脑地址和配对令牌。')
     this.run()
   }
@@ -173,6 +176,7 @@ export class Relay {
     this.requireReceiver()
     this.commit(this.state.endpoint, this.state.token, this.state.autoSince, this.resetItemsFor(this.state.endpoint))
     this.blockedEndpoint = ''
+    this.receiverRetryAt = 0
     this.notify('正在检查待发送文件。')
     this.run()
   }
@@ -288,10 +292,22 @@ export class Relay {
     }
   }
 
-  private delay(item: UploadItem, message: string): void {
+  private delay(item: UploadItem, message: string, receiverRetryAfter?: string): void {
     const attempts = item.attempts + 1
-    const delay = Math.min(MAX_RETRY_DELAY_MS, SCAN_INTERVAL_MS * Math.pow(2, Math.min(attempts, 8)))
-    this.record(this.withResult(item, 'pending', attempts, Date.now() + delay, message))
+    const now = Date.now()
+    let delay = SCAN_INTERVAL_MS * Math.pow(2, Math.min(attempts, 8))
+    if (receiverRetryAfter !== undefined) {
+      const hint = receiverRetryAfter.trim()
+      const suggested = /^\d+$/.test(hint) ? Number(hint) * 1000 : Date.parse(hint) - now
+      if (suggested >= 0) {
+        delay = Math.max(1000, suggested)
+      }
+    }
+    const retryAt = now + Math.min(MAX_RETRY_DELAY_MS, delay)
+    this.record(this.withResult(item, 'pending', attempts, retryAt, message))
+    if (receiverRetryAfter !== undefined && item.target === this.state.endpoint) {
+      this.receiverRetryAt = retryAt
+    }
     this.notify(message)
   }
 
@@ -303,18 +319,21 @@ export class Relay {
   private async upload(item: UploadItem, token: string): Promise<void> {
     const source = item.staged ? this.store.stagedPath(item.id) : item.uri
     this.notify('正在发送 ' + item.filename)
-    let status: number
+    let response: UploadResponse
     try {
-      status = await sendCapture(item, source, token)
+      response = await sendCapture(item, source, token)
     } catch (error) {
-      if ((error as BusinessError).code === 13900002) {
+      const code = (error as BusinessError).code
+      if (code === 13900002) {
         this.reject(item, '原文件已不存在。')
+      } else if (code === 1007900006 || code === 1007900007 || code === 1007900028) {
+        this.delay(item, '暂时无法连接电脑，队列将自动重试。', '')
       } else {
         this.delay(item, '暂时无法读取文件或连接电脑，将自动重试。')
       }
       return
     }
-    switch (status) {
+    switch (response.status) {
       case 200:
       case 201:
         this.record(this.withResult(item, 'sent', item.attempts, 0, ''))
@@ -335,10 +354,14 @@ export class Relay {
         return
       case 400:
       case 415:
-        this.reject(item, '电脑无法接收此文件格式（HTTP ' + status + '）。')
+        this.reject(item, '电脑无法接收此文件格式（HTTP ' + response.status + '）。')
+        return
+      case 429:
+      case 503:
+        this.delay(item, '电脑接收端当前繁忙，队列将自动重试。', response.retryAfter)
         return
       default:
-        this.delay(item, '电脑暂时未接收文件（HTTP ' + status + '），将自动重试。')
+        this.delay(item, '电脑暂时未接收文件（HTTP ' + response.status + '），将自动重试。')
     }
   }
 
@@ -354,6 +377,9 @@ export class Relay {
       }
       while (this.foreground && this.state.endpoint === endpoint && this.blockedEndpoint !== endpoint) {
         const readyAt = Date.now()
+        if (readyAt < this.receiverRetryAt) {
+          break
+        }
         const next = this.state.items.find((item: UploadItem): boolean =>
           item.target === endpoint && item.state === 'pending' && item.retryAt <= readyAt)
         if (next === undefined) {

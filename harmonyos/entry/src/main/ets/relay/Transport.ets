@@ -15,6 +15,11 @@ interface PairingResponse {
   token: string
 }
 
+export interface UploadResponse {
+  status: number
+  retryAfter: string
+}
+
 export function normalizeEndpoint(input: string): string {
   const value = input.trim()
   if (!/^https?:\/\/[^/?#\\\s@]+\/?$/i.test(value)) {
@@ -32,7 +37,7 @@ function createSession(timeout: number): rcp.Session {
     autoRedirect: false,
     timeout: { connectMs: 8000, transferMs: timeout }
   }
-  return rcp.createSession({ requestConfiguration: { transfer: transfer } })
+  return rcp.createSession({ requestConfiguration: { proxy: 'no-proxy', transfer: transfer } })
 }
 
 function filenameHeader(name: string): string {
@@ -102,7 +107,7 @@ export async function pairReceiver(endpoint: string, code: string, deviceId: str
   }
 }
 
-export async function sendCapture(item: UploadItem, source: string, token: string): Promise<number> {
+export async function sendCapture(item: UploadItem, source: string, token: string): Promise<UploadResponse> {
   const file = await fileIo.open(source, fileIo.OpenMode.READ_ONLY)
   try {
     const stat = await fileIo.stat(file.fd)
@@ -123,7 +128,8 @@ export async function sendCapture(item: UploadItem, source: string, token: strin
     const session = createSession(LONG_TRANSFER_MS)
     try {
       const result = await session.fetch(request)
-      return result.statusCode
+      const retryAfter = result.headers['retry-after'] ?? result.headers['Retry-After']
+      return { status: result.statusCode, retryAfter: typeof retryAfter === 'string' ? retryAfter : '' }
     } finally {
       session.close()
     }

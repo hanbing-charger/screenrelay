@@ -98,9 +98,9 @@ public final class WatchService extends Service {
 
     private void sync() {
         syncing = true;
-        SyncEngine.submit(this, () -> destroyed, () -> main.post(() -> {
+        SyncEngine.submit(this, () -> destroyed, moreReady -> main.post(() -> {
             syncing = false;
-            long delay = changedWhileSyncing ? 0 : POLL_INTERVAL_MS;
+            long delay = changedWhileSyncing || moreReady ? 0 : POLL_INTERVAL_MS;
             changedWhileSyncing = false;
             requestSync(delay);
         }));

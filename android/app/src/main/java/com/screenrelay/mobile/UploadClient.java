@@ -7,6 +7,7 @@ import java.io.InputStream;
 import java.io.InterruptedIOException;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
+import java.net.Proxy;
 import java.net.URL;
 import java.net.URLEncoder;
 import java.util.function.BooleanSupplier;
@@ -70,7 +71,7 @@ final class UploadClient {
 
     static HttpURLConnection connect(String origin, String path) throws IOException {
         HttpURLConnection connection = (HttpURLConnection) new URL(origin + path)
-                .openConnection();
+                .openConnection(Proxy.NO_PROXY);
         connection.setConnectTimeout(8_000);
         connection.setReadTimeout(30_000);
         connection.setInstanceFollowRedirects(false);

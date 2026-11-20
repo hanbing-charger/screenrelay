@@ -107,6 +107,32 @@ final class RefuseRedirects: NSObject, URLSessionTaskDelegate {
     }
 }
 
+private final class ReceiverTask: @unchecked Sendable {
+    private let lock = NSLock()
+    private var task: URLSessionTask?
+    private var cancelled = false
+
+    func start(_ task: URLSessionTask) {
+        lock.lock()
+        if cancelled {
+            lock.unlock()
+            task.cancel()
+            return
+        }
+        self.task = task
+        task.resume()
+        lock.unlock()
+    }
+
+    func cancel() {
+        lock.lock()
+        cancelled = true
+        let task = self.task
+        lock.unlock()
+        task?.cancel()
+    }
+}
+
 final class Receiver {
     private struct Health: Decodable {
         let status: String
@@ -127,6 +153,7 @@ final class Receiver {
     }
 
     private let session: URLSession
+    private static let uploadIdleTimeout: TimeInterval = 90
     private let unreserved = CharacterSet(
         charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~"
     )
@@ -138,15 +165,52 @@ final class Receiver {
         configuration.httpCookieStorage = nil
         configuration.urlCache = nil
         configuration.urlCredentialStorage = nil
-        configuration.timeoutIntervalForRequest = 45
-        configuration.timeoutIntervalForResource = 30 * 60
+        // Override the system HTTP proxy for this receiver session.
+        configuration.connectionProxyDictionary = [
+            "HTTPEnable": 0,
+            "HTTPSEnable": 0,
+            "SOCKSEnable": 0,
+            "ProxyAutoConfigEnable": 0,
+            "ProxyAutoDiscoveryEnable": 0,
+        ]
+        configuration.timeoutIntervalForRequest = Self.uploadIdleTimeout
+        configuration.timeoutIntervalForResource = 45 * 60
         session = URLSession(configuration: configuration, delegate: RefuseRedirects(), delegateQueue: nil)
+    }
+
+    private func send(_ request: URLRequest, uploading file: URL? = nil) async throws -> (Data, URLResponse) {
+        let operation = ReceiverTask()
+        let result: (Data, URLResponse) = try await withTaskCancellationHandler {
+            try Task.checkCancellation()
+            return try await withCheckedThrowingContinuation { continuation in
+                let complete: @Sendable (Data?, URLResponse?, Error?) -> Void = { data, response, error in
+                    if let error {
+                        continuation.resume(throwing: error)
+                    } else if let response {
+                        continuation.resume(returning: (data ?? Data(), response))
+                    } else {
+                        continuation.resume(throwing: ReceiverIssue.response(nil))
+                    }
+                }
+                let task: URLSessionTask
+                if let file {
+                    task = session.uploadTask(with: request, fromFile: file, completionHandler: complete)
+                } else {
+                    task = session.dataTask(with: request, completionHandler: complete)
+                }
+                operation.start(task)
+            }
+        } onCancel: {
+            operation.cancel()
+        }
+        try Task.checkCancellation()
+        return result
     }
 
     func test(_ settings: ReceiverSettings) async throws {
         var request = URLRequest(url: settings.endpoint("health"))
         request.timeoutInterval = 8
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await send(request)
         let code = (response as? HTTPURLResponse)?.statusCode
         guard code == 200 else { throw ReceiverIssue.response(code) }
         guard (try? JSONDecoder().decode(Health.self, from: data))?.status == "ok" else {
@@ -163,7 +227,7 @@ final class Receiver {
             pairingCode: link.code, deviceId: deviceID, deviceName: deviceName
         ))
 
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await send(request)
         let status = (response as? HTTPURLResponse)?.statusCode
         if status == 401 { throw ReceiverIssue.expiredPairingCode }
         guard status == 200 || status == 201 else { throw ReceiverIssue.response(status) }
@@ -182,6 +246,7 @@ final class Receiver {
 
         var request = URLRequest(url: settings.endpoint("uploads"))
         request.httpMethod = "POST"
+        request.timeoutInterval = Self.uploadIdleTimeout
         request.setValue("Bearer \(settings.token)", forHTTPHeaderField: "Authorization")
         request.setValue(capture.filename.addingPercentEncoding(withAllowedCharacters: unreserved),
                          forHTTPHeaderField: "X-Filename")
@@ -190,7 +255,7 @@ final class Receiver {
         request.setValue(capture.mimeType, forHTTPHeaderField: "Content-Type")
         request.setValue(String(size), forHTTPHeaderField: "Content-Length")
 
-        let (data, response) = try await session.upload(for: request, fromFile: file)
+        let (data, response) = try await send(request, uploading: file)
         guard let response = response as? HTTPURLResponse else { throw ReceiverIssue.response(nil) }
         if response.statusCode == 200 || response.statusCode == 201 {
             guard let receipt = try? JSONDecoder().decode(Receipt.self, from: data), !receipt.id.isEmpty else {
