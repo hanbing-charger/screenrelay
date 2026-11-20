@@ -157,13 +157,13 @@ struct Index {
               .layoutWeight(1)
               .backgroundColor(ACCENT)
               .enabled(!this.busy && this.relay !== undefined)
-              .onClick((): void => { void this.action(() => this.saveConfiguration()) })
+              .onClick((): void => { this.action(() => this.saveConfiguration()) })
             Button('测试连接')
               .layoutWeight(1)
               .backgroundColor(BACKGROUND)
               .fontColor(ACCENT)
               .enabled(!this.busy && this.relay !== undefined)
-              .onClick((): void => { void this.action(() => this.checkConnection()) })
+              .onClick((): void => { this.action(() => this.checkConnection()) })
           }
           .width('100%')
         }
@@ -188,7 +188,7 @@ struct Index {
             .backgroundColor(BACKGROUND)
             .fontColor(ACCENT)
             .enabled(this.paired && !this.busy)
-            .onClick((): void => { void this.action(() => this.changeDetection()) })
+            .onClick((): void => { this.action(() => this.changeDetection()) })
         }
         .alignItems(HorizontalAlign.Start)
         .backgroundColor(Color.White)
@@ -208,13 +208,13 @@ struct Index {
               .backgroundColor(BACKGROUND)
               .fontColor(ACCENT)
               .enabled(this.paired && !this.busy)
-              .onClick((): void => { void this.action(() => this.pick('screenshot')) })
+              .onClick((): void => { this.action(() => this.pick('screenshot')) })
             Button('选择录屏')
               .layoutWeight(1)
               .backgroundColor(BACKGROUND)
               .fontColor(ACCENT)
               .enabled(this.paired && !this.busy)
-              .onClick((): void => { void this.action(() => this.pick('screen-recording')) })
+              .onClick((): void => { this.action(() => this.pick('screen-recording')) })
           }
           .width('100%')
           if (this.selectedUris.length > 0) {
@@ -222,7 +222,7 @@ struct Index {
               .width('100%')
               .backgroundColor(ACCENT)
               .enabled(this.paired && !this.busy)
-              .onClick((): void => { void this.action(() => this.enqueue()) })
+              .onClick((): void => { this.action(() => this.enqueue()) })
           }
         }
         .alignItems(HorizontalAlign.Start)
@@ -254,7 +254,7 @@ struct Index {
               .backgroundColor(BACKGROUND)
               .fontColor(ACCENT)
               .enabled(this.paired && !this.busy)
-              .onClick((): void => { void this.action(() => this.retry()) })
+              .onClick((): void => { this.action(() => this.retry()) })
           }
         }
         .alignItems(HorizontalAlign.Start)

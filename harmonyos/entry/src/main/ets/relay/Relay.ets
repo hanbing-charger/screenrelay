@@ -68,8 +68,8 @@ export class Relay {
   setForeground(value: boolean): void {
     this.foreground = value
     if (value && this.timer < 0) {
-      this.timer = setInterval(() => { void this.run() }, SCAN_INTERVAL_MS)
-      void this.run()
+      this.timer = setInterval(() => { this.run() }, SCAN_INTERVAL_MS)
+      this.run()
     }
     if (!value && this.timer >= 0) {
       clearInterval(this.timer)
@@ -87,7 +87,7 @@ export class Relay {
     this.commit(endpoint, token, sameReceiver ? this.state.autoSince : 0, this.resetItemsFor(endpoint))
     this.blockedEndpoint = ''
     this.notify('已保存电脑地址和配对令牌。')
-    void this.run()
+    this.run()
   }
 
   async checkConnection(address: string): Promise<boolean> {
@@ -107,7 +107,7 @@ export class Relay {
       this.commit(endpoint, this.state.token, Date.now(), this.state.items)
     }
     this.notify('自动发现已开启。返回应用时也会补查新截图和录屏。')
-    void this.run()
+    this.run()
   }
 
   disableDetection(): void {
@@ -150,7 +150,7 @@ export class Relay {
     } else {
       this.notify('已加入 ' + added + ' 个文件。另有 ' + failed + ' 个文件无法读取或保存。')
     }
-    void this.run()
+    this.run()
   }
 
   retry(): void {
@@ -158,7 +158,7 @@ export class Relay {
     this.commit(this.state.endpoint, this.state.token, this.state.autoSince, this.resetItemsFor(this.state.endpoint))
     this.blockedEndpoint = ''
     this.notify('正在检查待发送文件。')
-    void this.run()
+    this.run()
   }
 
   private resetItemsFor(endpoint: string): UploadItem[] {
