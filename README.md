@@ -4,18 +4,18 @@
 
 ## 电脑端
 
-[下载 Mac 和 Windows 接收器](https://github.com/hanbing-charger/screenrelay/releases/tag/desktop-v0.1.0)
+[下载 Mac 和 Windows 接收器](https://github.com/hanbing-charger/screenrelay/releases/tag/v0.2.0)
 
 1. 解压与电脑对应的接收器包。Apple 芯片 Mac 选 macOS-arm64，Intel Mac 选 macOS-x64。常见 Windows 电脑选 Windows-x64，ARM 版 Windows 选 Windows-arm64。
 2. Mac 双击「启动截屏快传.command」，Windows 双击「ScreenRelay.exe」。如果防火墙询问，允许在私人网络接收。构建未做商业签名或 Apple 公证，首次启动时系统可能要求在安全设置里确认来源。
-3. 浏览器会打开电脑控制台。复制其中的**电脑地址**和**配对码**到手机。若显示多个地址，选手机所在 Wi-Fi 对应的网卡地址。
+3. 浏览器会打开电脑控制台。点**扫码配对**，让手机端扫描二维码。若显示多个地址，选手机所在 Wi-Fi 对应的网卡地址。
 4. 保持接收器窗口运行。收到的文件会出现在控制台，默认保存于用户目录下的 `ScreenRelay` 文件夹，按日期及 `screenshot`、`screen-recording` 分类。按 `Ctrl+C` 或关闭接收器窗口可停止接收。
 
 ## 手机端
 
-[下载 Android APK 和 iOS IPA](https://github.com/hanbing-charger/screenrelay/releases/tag/mobile-v0.1.0)
+[下载 Android APK、iOS IPA 和鸿蒙 HAP](https://github.com/hanbing-charger/screenrelay/releases/tag/v0.2.0)
 
-在手机端填入地址和配对码，授予所需权限后开启同步，再截一张图或录一段视频。截图和录屏需要先保存到系统相册。自动同步从首次开启时开始收集。鸿蒙应用可手动选择相册中的文件。
+手机和电脑连同一个 Wi-Fi。在 Android、iOS 或 HarmonyOS NEXT 端点**扫码配对**，扫描电脑面板上的二维码。二维码有效期内可给多台手机使用，每台手机的配对会单独保存，电脑面板会列出已配对设备。也可以手动填写地址和配对码。授予所需权限并开启同步后，先截一张图或录一段视频验证。截图和录屏需要先保存到系统相册。自动同步从首次开启时开始收集。鸿蒙应用可手动选择相册中的文件。
 
 | 手机系统 | 使用方式 |
 | --- | --- |
@@ -38,7 +38,7 @@ ScreenRelay -tls-cert fullchain.pem -tls-key privkey.pem
 
 ## 从源码构建
 
-电脑端使用 Go 1.24 及以上版本，标准库之外无需安装依赖。在 `desktop` 目录运行：
+电脑端使用 Go 1.24 及以上版本。Go 会在构建时下载二维码依赖。在 `desktop` 目录运行：
 
 ```sh
 go test ./...

@@ -22,12 +22,17 @@
   <main class="shell">
     <div class="intro">
       <h1>电脑接收端</h1>
-      <p>手机和电脑连接到同一个局域网后，用下方信息配对手机。</p>
+      <p>将手机和电脑连接到同一个局域网，即可配对并接收截图和录屏。</p>
     </div>
 
     <div class="settings">
       <section class="card pairing" aria-labelledby="pairing-heading">
-        <h2 id="pairing-heading">配对手机</h2>
+        <div class="pairing-heading">
+          <h2 id="pairing-heading">配对手机</h2>
+          <button type="button" class="primary" id="open-pairing" aria-haspopup="dialog" aria-controls="pairing-dialog" disabled>
+            <span class="scan-icon" aria-hidden="true"></span>扫码配对
+          </button>
+        </div>
         <div class="field">
           <label for="server-address">接收地址</label>
           <div class="field-controls">
@@ -59,6 +64,15 @@
       </section>
     </div>
 
+    <section class="card devices" aria-labelledby="devices-heading">
+      <div class="activity-header">
+        <h2 id="devices-heading">已配对设备</h2>
+        <span class="file-count" id="devices-count" hidden></span>
+      </div>
+      <p class="devices-empty" id="devices-empty">正在读取已配对设备</p>
+      <ul class="device-list" id="device-list" hidden></ul>
+    </section>
+
     <section class="card activity" aria-labelledby="activity-heading">
       <div class="activity-header">
         <h2 id="activity-heading">最近接收</h2>
@@ -73,5 +87,26 @@
     </section>
     <footer class="footer" id="version" hidden></footer>
   </main>
+
+  <dialog class="pairing-dialog" id="pairing-dialog" aria-labelledby="pairing-dialog-heading" aria-describedby="pairing-instructions">
+    <div class="dialog-heading">
+      <h2 id="pairing-dialog-heading">扫码配对</h2>
+      <button type="button" id="close-pairing" autofocus>关闭</button>
+    </div>
+    <p class="dialog-copy" id="pairing-instructions">在手机端打开「扫码配对」，扫描下方二维码。二维码有效期内，多部手机可以使用同一个码。</p>
+    <div class="field">
+      <label for="pairing-address">二维码接收地址</label>
+      <select class="value" id="pairing-address" disabled></select>
+    </div>
+    <div class="qr-display">
+      <img class="pairing-image" id="pairing-image" alt="截屏快传配对二维码" width="256" height="256" hidden>
+      <p class="feedback" id="qr-feedback" role="status"></p>
+      <button type="button" id="refresh-pairing" hidden>重新生成</button>
+    </div>
+    <div class="qr-details">
+      <p class="qr-expiry" id="pairing-expiry" hidden></p>
+      <p class="dialog-devices" id="dialog-devices" role="status"></p>
+    </div>
+  </dialog>
 </body>
 </html>

@@ -14,6 +14,10 @@ name: Publish Mobile Packages
         description: "Successful Build iOS IPA run ID"
         type: string
         required: true
+      harmony_run_id:
+        description: "Successful unsigned Build HarmonyOS HAP run ID (optional)"
+        type: string
+        required: false
 
 jobs:
   publish:
@@ -39,11 +43,21 @@ jobs:
           name: screenrelay-ios-unsigned-ipa
           path: ${{ runner.temp }}/screenrelay-mobile
 
-      - name: Upload both packages to the draft release
+      - name: Download the HarmonyOS build
+        if: inputs.harmony_run_id != ''
+        uses: actions/download-artifact@v7
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.harmony_run_id }}
+          name: screenrelay-harmonyos-hap
+          path: ${{ runner.temp }}/screenrelay-mobile
+
+      - name: Upload packages to the draft release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.release_tag }}
+          INCLUDE_HARMONY: ${{ inputs.harmony_run_id != '' }}
         run: |
           set -euo pipefail
           if [[ $(gh release view --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft -- "$RELEASE_TAG") != true ]]; then
@@ -55,6 +69,10 @@ jobs:
           ipa="$package_dir/ScreenRelay-unsigned.ipa"
           unzip -tq "$apk"
           unzip -tq "$ipa"
-          gh release upload --repo "$GITHUB_REPOSITORY" -- "$RELEASE_TAG" \
-            "$apk#Android · 已验签的调试 APK" \
-            "$ipa#iOS · 未签名真机 IPA"
+          assets=("$apk#Android · 已验签的调试 APK" "$ipa#iOS · 未签名真机 IPA")
+          if [[ "$INCLUDE_HARMONY" == true ]]; then
+            hap="$package_dir/entry-default-unsigned.hap"
+            unzip -tq "$hap"
+            assets+=("$hap#鸿蒙 NEXT · 未签名真机 HAP")
+          fi
+          gh release upload --repo "$GITHUB_REPOSITORY" -- "$RELEASE_TAG" "${assets[@]}"

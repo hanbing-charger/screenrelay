@@ -24,7 +24,8 @@ struct Index {
   @State private failed: number = 0
   @State private otherReceivers: number = 0
   @State private selectedUris: string[] = []
-  @State private message: string = '输入电脑上的接收地址和配对令牌。'
+  @State private message: string = '配对电脑后即可发送截图和录屏。'
+  @State private pairingMessage: string = ''
   private selectedKind: MediaKind = 'screenshot'
   private relay: Relay | undefined = undefined
 
@@ -79,6 +80,27 @@ struct Index {
 
   private async saveConfiguration(): Promise<void> {
     this.relay?.saveSettings(this.address, this.token)
+    this.pairingMessage = ''
+  }
+
+  private async scanPairing(): Promise<void> {
+    const relay = this.relay
+    if (relay === undefined) {
+      return
+    }
+    this.pairingMessage = '正在扫码配对…'
+    try {
+      if (!(await relay.pairByScan())) {
+        this.pairingMessage = '已取消扫码。'
+        return
+      }
+      const status = relay.status()
+      this.address = status.endpoint
+      this.token = status.token
+      this.pairingMessage = '扫码配对成功。'
+    } catch (error) {
+      this.pairingMessage = (error as BusinessError).message || '扫码配对失败，请重试。'
+    }
   }
 
   private async checkConnection(): Promise<void> {
@@ -136,6 +158,16 @@ struct Index {
             .fontSize(20)
             .fontWeight(FontWeight.Bold)
             .fontColor(INK)
+          Button('扫描配对二维码')
+            .width('100%')
+            .backgroundColor(ACCENT)
+            .enabled(!this.busy && this.relay !== undefined)
+            .onClick((): void => { this.action(() => this.scanPairing()) })
+          if (this.pairingMessage) {
+            Text(this.pairingMessage)
+              .fontSize(14)
+              .fontColor(SUBTLE)
+          }
           Text('电脑地址')
             .fontSize(14)
             .fontColor(SUBTLE)
@@ -155,7 +187,8 @@ struct Index {
           Row({ space: 8 }) {
             Button('保存配对')
               .layoutWeight(1)
-              .backgroundColor(ACCENT)
+              .backgroundColor(BACKGROUND)
+              .fontColor(ACCENT)
               .enabled(!this.busy && this.relay !== undefined)
               .onClick((): void => { this.action(() => this.saveConfiguration()) })
             Button('测试连接')

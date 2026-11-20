@@ -19,3 +19,8 @@ android {
         targetCompatibility JavaVersion.VERSION_17
     }
 }
+
+dependencies {
+    implementation 'androidx.core:core:1.6.0'
+    implementation 'com.journeyapps:zxing-android-embedded:4.3.0'
+}

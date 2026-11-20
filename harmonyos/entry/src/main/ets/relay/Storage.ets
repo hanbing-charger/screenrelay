@@ -21,6 +21,7 @@ export interface UploadItem {
 
 export interface SavedState {
   version: number
+  deviceId: string
   endpoint: string
   token: string
   autoSince: number
@@ -45,6 +46,10 @@ export class RelayStorage {
       if (state.version !== 1 || !Array.isArray(state.items)) {
         throw new Error('传输记录格式无法识别')
       }
+      if (!state.deviceId) {
+        state.deviceId = util.generateRandomUUID()
+        this.save(state)
+      }
       const pendingFiles = new Set<string>()
       for (const item of state.items) {
         if (item.staged && item.state === 'pending') {
@@ -58,7 +63,11 @@ export class RelayStorage {
       }
       return state
     }
-    return { version: 1, endpoint: '', token: '', autoSince: 0, items: [] }
+    const state: SavedState = {
+      version: 1, deviceId: util.generateRandomUUID(), endpoint: '', token: '', autoSince: 0, items: []
+    }
+    this.save(state)
+    return state
   }
 
   save(state: SavedState): void {

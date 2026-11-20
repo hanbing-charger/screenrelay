@@ -20,6 +20,7 @@ import (
 type relay struct {
 	store         *captureStore
 	token         string
+	pairings      *pairingRegistry
 	maxBytes      int64
 	uploads       chan struct{}
 	scheme        string
@@ -35,12 +36,13 @@ func (s *relay) phoneAPI() http.Handler {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "version": version})
 	})
 	mux.HandleFunc("POST /api/v1/uploads", s.upload)
+	mux.HandleFunc("POST /api/v1/pair", s.pairDevice)
 	return mux
 }
 
 func (s *relay) upload(w http.ResponseWriter, r *http.Request) {
 	token, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
-	if !ok || subtle.ConstantTimeCompare([]byte(token), []byte(s.token)) != 1 {
+	if !ok || (subtle.ConstantTimeCompare([]byte(token), []byte(s.token)) != 1 && !s.pairings.accepts(token)) {
 		w.Header().Set("WWW-Authenticate", `Bearer realm="ScreenRelay"`)
 		writeError(w, http.StatusUnauthorized, "invalid pairing code")
 		return
@@ -141,12 +143,13 @@ type recentFile struct {
 }
 
 type dashboardStatus struct {
-	Version   string       `json:"version"`
-	Listening bool         `json:"listening"`
-	Addresses []string     `json:"addresses"`
-	Token     string       `json:"token"`
-	Folder    string       `json:"folder"`
-	Recent    []recentFile `json:"recent"`
+	Version   string                `json:"version"`
+	Listening bool                  `json:"listening"`
+	Addresses []string              `json:"addresses"`
+	Token     string                `json:"token"`
+	Folder    string                `json:"folder"`
+	Recent    []recentFile          `json:"recent"`
+	Devices   []pairedDeviceSummary `json:"devices"`
 }
 
 func (s *relay) dashboardAPI() http.Handler {
@@ -162,10 +165,10 @@ func (s *relay) dashboardAPI() http.Handler {
 		})
 	}
 	mux.HandleFunc("GET /api/status", s.status)
+	mux.HandleFunc("POST /api/pairing", s.showPairingQR)
 	mux.HandleFunc("GET /files/{id}", s.serveCapture)
 	mux.HandleFunc("POST /api/open-folder", func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("X-ScreenRelay") != "1" ||
-			r.Header.Get("Origin") != "http://"+s.dashboardHost {
+		if !s.dashboardActionAllowed(r) {
 			writeError(w, http.StatusForbidden, "dashboard origin required")
 			return
 		}
@@ -192,6 +195,11 @@ func (s *relay) dashboardAPI() http.Handler {
 	})
 }
 
+func (s *relay) dashboardActionAllowed(r *http.Request) bool {
+	return r.Header.Get("X-ScreenRelay") == "1" &&
+		r.Header.Get("Origin") == "http://"+s.dashboardHost
+}
+
 func (s *relay) status(w http.ResponseWriter, r *http.Request) {
 	recent := []recentFile{}
 	for _, record := range s.store.recent(40) {
@@ -202,7 +210,7 @@ func (s *relay) status(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, dashboardStatus{
 		Version: version, Listening: true, Addresses: advertiseAddresses(s.listening, s.scheme),
-		Token: s.token, Folder: s.store.root, Recent: recent,
+		Token: s.token, Folder: s.store.root, Recent: recent, Devices: s.pairings.summaries(),
 	})
 }
 

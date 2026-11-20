@@ -15,7 +15,7 @@ final class UploadClient {
     private UploadClient() {}
 
     static boolean checkConnection(Settings.Configuration configuration) throws IOException {
-        HttpURLConnection connection = connect(configuration, "/api/v1/health");
+        HttpURLConnection connection = connect(configuration.origin(), "/api/v1/health");
         try {
             return connection.getResponseCode() == HttpURLConnection.HTTP_OK;
         } finally {
@@ -25,7 +25,7 @@ final class UploadClient {
 
     static int upload(ContentResolver resolver, Settings.Configuration configuration,
                       SyncStore.Upload upload, BooleanSupplier cancelled) throws IOException {
-        HttpURLConnection connection = connect(configuration, "/api/v1/uploads");
+        HttpURLConnection connection = connect(configuration.origin(), "/api/v1/uploads");
         try (InputStream source = resolver.openInputStream(upload.uri())) {
             if (source == null) {
                 throw new IOException("MediaStore returned no stream");
@@ -68,9 +68,8 @@ final class UploadClient {
         }
     }
 
-    private static HttpURLConnection connect(Settings.Configuration configuration, String path)
-            throws IOException {
-        HttpURLConnection connection = (HttpURLConnection) new URL(configuration.origin() + path)
+    static HttpURLConnection connect(String origin, String path) throws IOException {
+        HttpURLConnection connection = (HttpURLConnection) new URL(origin + path)
                 .openConnection();
         connection.setConnectTimeout(8_000);
         connection.setReadTimeout(30_000);

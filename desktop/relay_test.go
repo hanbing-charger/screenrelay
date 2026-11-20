@@ -19,8 +19,12 @@ func testRelay(t *testing.T, folder string) *relay {
 	if err != nil {
 		t.Fatal(err)
 	}
+	pairings, err := loadPairings(filepath.Join(folder, "paired-devices.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	return &relay{
-		store: store, token: "test-pairing-token", maxBytes: 1024,
+		store: store, token: "test-pairing-token", pairings: pairings, maxBytes: 1024,
 		uploads: make(chan struct{}, 4), scheme: "http",
 		listening:     &net.TCPAddr{IP: net.IPv4(192, 168, 0, 1), Port: 8765},
 		dashboardHost: "127.0.0.1:40000",

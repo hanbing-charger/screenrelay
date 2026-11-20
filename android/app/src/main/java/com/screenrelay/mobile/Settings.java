@@ -7,9 +7,12 @@ import android.content.pm.PackageManager;
 import android.os.Build;
 
 import java.net.URI;
+import java.net.URISyntaxException;
+import java.util.Locale;
 import java.util.UUID;
 
 final class Settings {
+    private static final Object INSTALLATION_ID_LOCK = new Object();
     private final SharedPreferences values;
 
     Settings(Context context) {
@@ -18,10 +21,19 @@ final class Settings {
 
     record Configuration(String origin, String token) {
         static Configuration fromInput(CharSequence originInput, CharSequence tokenInput) {
+            String origin = normalizedOrigin(originInput);
+            String token = tokenInput.toString().trim();
+            if (token.isEmpty() || token.length() > 512 || !token.matches("[!-~]+")) {
+                throw new IllegalArgumentException("请填写电脑接收端显示的配对密钥。");
+            }
+            return new Configuration(origin, token);
+        }
+
+        static String normalizedOrigin(CharSequence originInput) {
             URI uri;
             try {
                 uri = new URI(originInput.toString().trim());
-            } catch (Exception invalid) {
+            } catch (URISyntaxException invalid) {
                 throw new IllegalArgumentException("请填写有效的电脑地址。");
             }
             String scheme = uri.getScheme();
@@ -32,12 +44,7 @@ final class Settings {
                     || (!uri.getPath().isEmpty() && !"/".equals(uri.getPath()))) {
                 throw new IllegalArgumentException("请使用电脑上显示的 HTTP 或 HTTPS 地址。");
             }
-            String token = tokenInput.toString().trim();
-            if (token.isEmpty() || token.length() > 512 || !token.matches("[!-~]+")) {
-                throw new IllegalArgumentException("请填写电脑接收端显示的配对密钥。");
-            }
-            return new Configuration(uri.getScheme().toLowerCase(java.util.Locale.ROOT)
-                    + "://" + uri.getRawAuthority(), token);
+            return uri.getScheme().toLowerCase(Locale.ROOT) + "://" + uri.getRawAuthority();
         }
     }
 
@@ -57,24 +64,34 @@ final class Settings {
         return values.getLong("firstEnabledAt", -1);
     }
 
-    synchronized String installationId() {
-        String id = values.getString("installationId", "");
-        if (id.isEmpty()) {
-            id = UUID.randomUUID().toString();
-            values.edit().putString("installationId", id).commit();
+    String installationId() {
+        synchronized (INSTALLATION_ID_LOCK) {
+            String id = values.getString("installationId", "");
+            if (id.isEmpty()) {
+                id = UUID.randomUUID().toString();
+                values.edit().putString("installationId", id).commit();
+            }
+            return id;
         }
-        return id;
     }
 
     void enable(Configuration configuration) {
         long firstEnabledAt = firstEnabledAt();
-        values.edit().putString("origin", configuration.origin())
-                .putString("token", configuration.token())
+        configurationChange(configuration)
                 .putBoolean("enabled", true)
-                .putInt("revision", revision() + 1)
                 .putLong("firstEnabledAt", firstEnabledAt < 0
                         ? System.currentTimeMillis() / 1000 : firstEnabledAt)
                 .apply();
+    }
+
+    void saveConfiguration(Configuration configuration) {
+        configurationChange(configuration).apply();
+    }
+
+    private SharedPreferences.Editor configurationChange(Configuration configuration) {
+        return values.edit().putString("origin", configuration.origin())
+                .putString("token", configuration.token())
+                .putInt("revision", revision() + 1);
     }
 
     void disable() {

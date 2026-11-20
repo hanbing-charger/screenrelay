@@ -1,11 +1,12 @@
 import { common } from '@kit.AbilityKit'
 import { util } from '@kit.ArkTS'
-import { BusinessError } from '@kit.BasicServicesKit'
+import { BusinessError, deviceInfo } from '@kit.BasicServicesKit'
 import { captureKey, getNewCaptures, getSelectedCapture, requestMediaAccess } from './Media'
 import type { Capture, MediaKind } from './Media'
+import { scanPairingCode } from './Pairing'
 import { RelayStorage } from './Storage'
 import type { SavedState, UploadItem } from './Storage'
-import { checkReceiver, normalizeEndpoint, sendCapture } from './Transport'
+import { checkReceiver, normalizeEndpoint, pairReceiver, sendCapture } from './Transport'
 
 export interface RelayStatus {
   endpoint: string
@@ -30,7 +31,7 @@ export class Relay {
   private timer: number = -1
   private running: boolean = false
   private blockedEndpoint: string = ''
-  private message: string = '输入电脑上的接收地址和配对令牌。'
+  private message: string = '配对电脑后即可发送截图和录屏。'
 
   constructor(context: common.UIAbilityContext, onChange: (status: RelayStatus) => void) {
     this.context = context
@@ -96,6 +97,17 @@ export class Relay {
 
   async checkConnection(address: string): Promise<boolean> {
     return checkReceiver(normalizeEndpoint(address))
+  }
+
+  async pairByScan(): Promise<boolean> {
+    const pairing = await scanPairingCode(this.context)
+    if (pairing === undefined) {
+      return false
+    }
+    const model = (deviceInfo.marketName || deviceInfo.productModel || '').trim() || '鸿蒙设备'
+    const token = await pairReceiver(pairing.endpoint, pairing.code, this.state.deviceId, model.slice(0, 80))
+    this.saveSettings(pairing.endpoint, token)
+    return true
   }
 
   async enableDetection(): Promise<void> {
@@ -188,7 +200,7 @@ export class Relay {
 
   private commit(endpoint: string, token: string, autoSince: number, items: UploadItem[]): void {
     const next: SavedState = {
-      version: 1, endpoint: endpoint, token: token, autoSince: autoSince, items: items
+      version: 1, deviceId: this.state.deviceId, endpoint: endpoint, token: token, autoSince: autoSince, items: items
     }
     this.store.save(next)
     this.state = next

@@ -24,7 +24,7 @@ import (
 	"time"
 )
 
-const version = "0.1.0"
+const version = "0.2.0"
 
 //go:embed ui/index.html ui/style.css ui/app.js
 var dashboard embed.FS
@@ -74,9 +74,21 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("open receive folder: %w", err)
 	}
-	token, err := pairingToken()
+	configDir, err := os.UserConfigDir()
+	if err != nil {
+		return fmt.Errorf("locate receiver configuration: %w", err)
+	}
+	configDir = filepath.Join(configDir, "ScreenRelay")
+	if err := os.MkdirAll(configDir, 0o700); err != nil {
+		return fmt.Errorf("open receiver configuration: %w", err)
+	}
+	token, err := pairingToken(configDir)
 	if err != nil {
 		return fmt.Errorf("load pairing code: %w", err)
+	}
+	pairings, err := loadPairings(filepath.Join(configDir, "paired-devices.json"))
+	if err != nil {
+		return fmt.Errorf("load paired devices: %w", err)
 	}
 
 	local, err := net.Listen("tcp4", "127.0.0.1:0")
@@ -86,7 +98,7 @@ func run() error {
 	defer local.Close()
 
 	service := &relay{
-		store: store, token: token, maxBytes: *maxMiB << 20,
+		store: store, token: token, pairings: pairings, maxBytes: *maxMiB << 20,
 		uploads: make(chan struct{}, 4), scheme: scheme,
 		listening: receiver.Addr().(*net.TCPAddr), dashboardHost: local.Addr().String(),
 	}
@@ -115,7 +127,7 @@ func run() error {
 	for _, address := range advertiseAddresses(service.listening, scheme) {
 		fmt.Println("手机端地址  " + address)
 	}
-	fmt.Println("配对码显示在控制台网页。按 Ctrl+C 可停止接收。")
+	fmt.Println("配对二维码与手动配对码在控制台网页。按 Ctrl+C 可停止接收。")
 	if !*noOpen {
 		if err := openDesktop(dashboardURL, false); err != nil {
 			log.Printf("无法自动打开浏览器，请手动打开上面的电脑控制台地址。 %v", err)
@@ -136,15 +148,7 @@ func run() error {
 	return adminServer.Close()
 }
 
-func pairingToken() (string, error) {
-	config, err := os.UserConfigDir()
-	if err != nil {
-		return "", err
-	}
-	dir := filepath.Join(config, "ScreenRelay")
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return "", err
-	}
+func pairingToken(dir string) (string, error) {
 	path := filepath.Join(dir, "pairing-token")
 	token, err := os.ReadFile(path)
 	if err == nil {
@@ -158,10 +162,10 @@ func pairingToken() (string, error) {
 	if !errors.Is(err, os.ErrNotExist) {
 		return "", err
 	}
-	text := base64.RawURLEncoding.EncodeToString(randBytes(32))
+	text := newPairingSecret()
 	if err := writeNewFile(path, []byte(text+"\n")); err != nil {
 		if errors.Is(err, os.ErrExist) {
-			return pairingToken()
+			return pairingToken(dir)
 		}
 		return "", err
 	}

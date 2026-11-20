@@ -32,6 +32,7 @@ def package(target, output_directory):
         with ZipFile(archive_path, "w", compression=ZIP_DEFLATED, compresslevel=9) as archive:
             archive.write(binary, binary.name)
             archive.write(PACKAGING / "使用说明.txt", "使用说明.txt")
+            archive.write(PACKAGING / "go-qrcode-LICENSE.txt", "go-qrcode-LICENSE.txt")
             if operating_system == "darwin":
                 archive.write(PACKAGING / "启动截屏快传.command", "启动截屏快传.command")
         with ZipFile(archive_path) as archive:

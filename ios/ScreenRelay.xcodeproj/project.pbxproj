@@ -10,6 +10,7 @@
         660000000000000000000002 /* SyncModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 660000000000000000000012 /* SyncModel.swift */; };
         660000000000000000000003 /* CaptureLibrary.swift in Sources */ = {isa = PBXBuildFile; fileRef = 660000000000000000000013 /* CaptureLibrary.swift */; };
         660000000000000000000004 /* Receiver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 660000000000000000000014 /* Receiver.swift */; };
+        660000000000000000000005 /* PairQRCodeSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 660000000000000000000017 /* PairQRCodeSheet.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -19,6 +20,7 @@
         660000000000000000000014 /* Receiver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Receiver.swift; sourceTree = "<group>"; };
         660000000000000000000015 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
         660000000000000000000016 /* ScreenRelay.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ScreenRelay.app; sourceTree = BUILT_PRODUCTS_DIR; };
+        660000000000000000000017 /* PairQRCodeSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairQRCodeSheet.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -46,6 +48,7 @@
                 660000000000000000000012 /* SyncModel.swift */,
                 660000000000000000000013 /* CaptureLibrary.swift */,
                 660000000000000000000014 /* Receiver.swift */,
+                660000000000000000000017 /* PairQRCodeSheet.swift */,
                 660000000000000000000015 /* Info.plist */,
             );
             path = ScreenRelay;
@@ -124,6 +127,7 @@
                 660000000000000000000002 /* SyncModel.swift in Sources */,
                 660000000000000000000003 /* CaptureLibrary.swift in Sources */,
                 660000000000000000000004 /* Receiver.swift in Sources */,
+                660000000000000000000005 /* PairQRCodeSheet.swift in Sources */,
             );
             runOnlyForDeploymentPostprocessing = 0;
         };

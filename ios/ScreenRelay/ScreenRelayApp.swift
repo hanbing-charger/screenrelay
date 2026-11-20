@@ -56,25 +56,44 @@ private struct PairingView: View {
     @State private var token = ""
     @State private var testResult: String?
     @State private var testing = false
+    @State private var showingScanner = false
+    @State private var pairing = false
+    @State private var pairingResult: String?
     private let timer = Timer.publish(every: 20, on: .main, in: .common).autoconnect()
 
     var body: some View {
         NavigationStack {
             Form {
                 Section {
+                    Button {
+                        pairingResult = nil
+                        showingScanner = true
+                    } label: {
+                        Label("扫描电脑配对二维码", systemImage: "qrcode.viewfinder")
+                    }
+
+                    if pairing {
+                        ProgressView("正在配对…")
+                    } else if let pairingResult {
+                        Text(pairingResult).foregroundStyle(.secondary)
+                    }
+
                     TextField("http://192.168.1.20:8765", text: $address)
                         .keyboardType(.URL)
                         .textContentType(.URL)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .accessibilityLabel("电脑端地址")
-                    SecureField("配对码", text: $token)
+                    SecureField("配对码或设备令牌", text: $token)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
 
                     HStack {
-                        Button("保存配置") { model.saveSettings(address: address, token: token) }
-                            .buttonStyle(.borderedProminent)
+                        Button("保存配置") {
+                            pairingResult = nil
+                            model.saveSettings(address: address, token: token)
+                        }
+                        .buttonStyle(.borderedProminent)
                         Button("测试连接") {
                             testing = true
                             testResult = nil
@@ -99,8 +118,9 @@ private struct PairingView: View {
                 } header: {
                     Text("配对电脑")
                 } footer: {
-                    Text("让 iPhone 和电脑连接到同一局域网，再填写接收端显示的地址和配对码。")
+                    Text("让 iPhone 和电脑连接到同一局域网。扫描接收端的配对二维码，或手动填写电脑地址和配对码。")
                 }
+                .disabled(pairing)
 
                 Section {
                     Toggle("自动上传", isOn: Binding(
@@ -149,6 +169,9 @@ private struct PairingView: View {
                 }
             }
             .navigationTitle("截屏快传")
+            .sheet(isPresented: $showingScanner) {
+                PairQRCodeSheet(onRead: pairWithQRCode)
+            }
             .onAppear {
                 guard let settings = model.settings else { return }
                 address = settings.baseURL.absoluteString
@@ -157,6 +180,23 @@ private struct PairingView: View {
             .onChange(of: address) { _ in testResult = nil }
             .onChange(of: token) { _ in testResult = nil }
             .onReceive(timer) { _ in model.foregroundTick() }
+        }
+    }
+
+    private func pairWithQRCode(_ scannedValue: String) {
+        guard showingScanner, !pairing else { return }
+        showingScanner = false
+        pairing = true
+        Task {
+            defer { pairing = false }
+            do {
+                let settings = try await model.pair(scannedValue: scannedValue)
+                address = settings.baseURL.absoluteString
+                token = settings.token
+                pairingResult = "配对成功，电脑配置已保存。"
+            } catch {
+                pairingResult = "配对失败。\(error.localizedDescription)"
+            }
         }
     }
 

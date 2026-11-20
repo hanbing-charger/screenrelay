@@ -8,6 +8,18 @@ const elements = {
   toggleCode: document.getElementById("toggle-code"),
   copyCode: document.getElementById("copy-code"),
   pairingFeedback: document.getElementById("pairing-feedback"),
+  openPairing: document.getElementById("open-pairing"),
+  closePairing: document.getElementById("close-pairing"),
+  pairingDialog: document.getElementById("pairing-dialog"),
+  pairingAddress: document.getElementById("pairing-address"),
+  pairingImage: document.getElementById("pairing-image"),
+  pairingExpiry: document.getElementById("pairing-expiry"),
+  pairingDevices: document.getElementById("dialog-devices"),
+  qrFeedback: document.getElementById("qr-feedback"),
+  refreshPairing: document.getElementById("refresh-pairing"),
+  devicesCount: document.getElementById("devices-count"),
+  devicesEmpty: document.getElementById("devices-empty"),
+  deviceList: document.getElementById("device-list"),
   folder: document.getElementById("folder-path"),
   openFolder: document.getElementById("open-folder"),
   folderFeedback: document.getElementById("folder-feedback"),
@@ -30,10 +42,13 @@ const dateFormat = new Intl.DateTimeFormat("zh-CN", {
 
 const sizeFormat = new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 1 });
 let previousAddresses = "";
+let previousDevices = "";
 let previousFiles = "";
 let statusLoaded = false;
 let folderAvailable = false;
 let folderOpening = false;
+let pairingRequest;
+let pairingTimer;
 
 function setStatus(label, state) {
   if (elements.status.textContent !== label) elements.status.textContent = label;
@@ -47,16 +62,123 @@ function setFeedback(element, message, isError = false) {
 
 function updateAddresses(addresses) {
   const snapshot = JSON.stringify(addresses);
-  if (snapshot === previousAddresses) return;
+  if (snapshot === previousAddresses) return false;
   previousAddresses = snapshot;
 
   const selected = elements.address.value;
-  const options = addresses.map((address) => new Option(address, address));
-  if (options.length === 0) options.push(new Option("未发现局域网地址", ""));
-  elements.address.replaceChildren(...options);
-  if (addresses.includes(selected)) elements.address.value = selected;
-  elements.address.disabled = addresses.length === 0;
+  for (const picker of [elements.address, elements.pairingAddress]) {
+    const options = addresses.map((address) => new Option(address, address));
+    if (options.length === 0) options.push(new Option("未发现局域网地址", ""));
+    picker.replaceChildren(...options);
+    if (addresses.includes(selected)) picker.value = selected;
+    picker.disabled = addresses.length === 0;
+  }
   elements.copyAddress.disabled = addresses.length === 0;
+  return elements.address.value !== selected;
+}
+
+function createDeviceRow(device) {
+  const row = document.createElement("li");
+  row.className = "device-row";
+  const icon = document.createElement("span");
+  icon.className = "device-icon";
+  icon.setAttribute("aria-hidden", "true");
+  const detail = document.createElement("div");
+  const name = document.createElement("p");
+  name.className = "device-name";
+  name.dir = "auto";
+  name.textContent = device.name || "未命名设备";
+  detail.append(name);
+  const date = new Date(device.pairedAt);
+  if (device.pairedAt && Number.isFinite(date.getTime())) {
+    const time = document.createElement("time");
+    time.className = "device-time";
+    time.dateTime = date.toISOString();
+    time.textContent = dateFormat.format(date);
+    detail.append(time);
+  }
+  row.append(icon, detail);
+  return row;
+}
+
+function updateDevices(devices) {
+  const snapshot = JSON.stringify(devices);
+  if (snapshot === previousDevices) return;
+  previousDevices = snapshot;
+
+  elements.deviceList.replaceChildren(...devices.map(createDeviceRow));
+  elements.deviceList.hidden = devices.length === 0;
+  elements.devicesEmpty.hidden = devices.length !== 0;
+  elements.devicesEmpty.textContent = "暂无扫码配对的设备";
+  elements.devicesCount.hidden = false;
+  elements.devicesCount.textContent = `${devices.length} 台`;
+  const pairedCount = `已配对 ${devices.length} 台设备`;
+  if (elements.pairingDevices.textContent !== pairedCount) elements.pairingDevices.textContent = pairedCount;
+}
+
+function clearPairingCode() {
+  clearInterval(pairingTimer);
+  elements.pairingImage.hidden = true;
+  elements.pairingImage.removeAttribute("src");
+  elements.pairingExpiry.hidden = true;
+}
+
+function updatePairingCountdown(expiry) {
+  const seconds = Math.ceil((expiry - Date.now()) / 1000);
+  if (seconds <= 0) {
+    clearPairingCode();
+    setFeedback(elements.qrFeedback, "二维码已过期，可以重新生成。", true);
+    elements.refreshPairing.hidden = false;
+    return;
+  }
+  const remaining = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+  elements.pairingExpiry.textContent = `剩余有效时间 ${remaining}`;
+  elements.pairingExpiry.hidden = false;
+}
+
+async function requestPairingCode() {
+  pairingRequest?.abort();
+  clearPairingCode();
+  elements.refreshPairing.hidden = true;
+  const address = elements.pairingAddress.value;
+  if (!address) {
+    setFeedback(elements.qrFeedback, "没有可用的接收地址，请连接局域网。", true);
+    return;
+  }
+
+  const controller = new AbortController();
+  pairingRequest = controller;
+  setFeedback(elements.qrFeedback, "正在生成二维码…");
+  const timeout = setTimeout(() => controller.abort(), 6000);
+  try {
+    const response = await fetch("/api/pairing", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-ScreenRelay": "1" },
+      body: JSON.stringify({ address }),
+      signal: controller.signal,
+    });
+    if (!response.ok) throw new Error("pairing");
+    const data = await response.json();
+    if (pairingRequest !== controller || !elements.pairingDialog.open) return;
+
+    const expiry = Date.parse(data.expiresAt);
+    if (typeof data.image !== "string" || !data.image.startsWith("data:image/png;base64,") || !(expiry > Date.now())) {
+      throw new Error("pairing response");
+    }
+    elements.pairingImage.src = data.image;
+    elements.pairingImage.hidden = false;
+    setFeedback(elements.qrFeedback, "");
+    pairingTimer = setInterval(() => updatePairingCountdown(expiry), 1000);
+    updatePairingCountdown(expiry);
+  } catch {
+    if (pairingRequest === controller && elements.pairingDialog.open) {
+      setFeedback(elements.qrFeedback, "暂时无法生成二维码，请重试。", true);
+      elements.refreshPairing.hidden = false;
+    }
+  } finally {
+    clearTimeout(timeout);
+    if (pairingRequest === controller) pairingRequest = undefined;
+  }
 }
 
 function getFileSize(bytes) {
@@ -144,6 +266,7 @@ function updateFiles(files) {
 
 function showStatus(data) {
   const addresses = Array.isArray(data.addresses) ? data.addresses.filter((address) => typeof address === "string" && address) : [];
+  const devices = Array.isArray(data.devices) ? data.devices.filter((device) => typeof device?.id === "string") : [];
   const files = Array.isArray(data.recent) ? data.recent.filter((file) => typeof file?.name === "string") : [];
   const token = typeof data.token === "string" ? data.token : "";
   const folder = typeof data.folder === "string" ? data.folder : "";
@@ -151,7 +274,10 @@ function showStatus(data) {
   if (!data.listening) setStatus("接收服务未启动", "unavailable");
   else if (addresses.length === 0) setStatus("等待局域网连接", "unavailable");
   else setStatus("接收服务运行中", "ready");
-  updateAddresses(addresses);
+  const addressChanged = updateAddresses(addresses);
+  elements.openPairing.disabled = !data.listening || addresses.length === 0;
+  if (addressChanged && elements.pairingDialog.open) requestPairingCode();
+  updateDevices(devices);
 
   if (elements.code.value !== token) elements.code.value = token;
   elements.code.placeholder = "配对码不可用";
@@ -181,12 +307,14 @@ async function refreshStatus() {
     statusLoaded = true;
   } catch {
     setStatus("无法连接接收端", "unavailable");
+    elements.openPairing.disabled = true;
     if (!statusLoaded) {
       elements.address.replaceChildren(new Option("接收地址不可用", ""));
       elements.code.placeholder = "配对码不可用";
       elements.folder.textContent = "保存位置不可用";
       elements.emptyTitle.textContent = "暂时无法读取接收记录";
       elements.emptyDescription.textContent = "启动电脑接收端后会自动重连。";
+      elements.devicesEmpty.textContent = "暂时无法读取已配对设备";
     }
   } finally {
     clearTimeout(timeout);
@@ -226,7 +354,27 @@ function setCodeVisibility(visible) {
   elements.toggleCode.setAttribute("aria-label", visible ? "隐藏配对码" : "显示配对码");
 }
 
-elements.address.addEventListener("change", () => setFeedback(elements.pairingFeedback, ""));
+elements.address.addEventListener("change", () => {
+  elements.pairingAddress.value = elements.address.value;
+  setFeedback(elements.pairingFeedback, "");
+});
+elements.openPairing.addEventListener("click", () => {
+  elements.pairingDialog.showModal();
+  requestPairingCode();
+});
+elements.closePairing.addEventListener("click", () => elements.pairingDialog.close());
+elements.pairingDialog.addEventListener("close", () => {
+  if (elements.pairingDialog.open) return;
+  pairingRequest?.abort();
+  pairingRequest = undefined;
+  clearPairingCode();
+});
+elements.pairingAddress.addEventListener("change", () => {
+  elements.address.value = elements.pairingAddress.value;
+  setFeedback(elements.pairingFeedback, "");
+  requestPairingCode();
+});
+elements.refreshPairing.addEventListener("click", requestPairingCode);
 elements.copyAddress.addEventListener("click", async () => {
   const address = elements.address.value;
   if (await copyToClipboard(address)) setFeedback(elements.pairingFeedback, "接收地址已复制");

@@ -3,8 +3,10 @@ package com.screenrelay.mobile;
 import android.Manifest;
 import android.app.Activity;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.graphics.Insets;
+import android.graphics.Rect;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Build;
@@ -22,6 +24,9 @@ import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
+import com.journeyapps.barcodescanner.ScanIntentResult;
+import com.journeyapps.barcodescanner.ScanOptions;
+
 import java.io.IOException;
 import java.util.Locale;
 import java.util.concurrent.ExecutorService;
@@ -30,6 +35,8 @@ import java.util.concurrent.Executors;
 public final class MainActivity extends Activity {
     private static final int MEDIA_PERMISSION_REQUEST = 1;
     private static final int NOTIFICATION_PERMISSION_REQUEST = 2;
+    private static final int CAMERA_PERMISSION_REQUEST = 3;
+    private static final int QR_SCAN_REQUEST = 4;
     private static final int BLUE = Color.rgb(37, 88, 221);
     private static final int INK = Color.rgb(23, 36, 62);
     private static final int SECONDARY = Color.rgb(72, 88, 113);
@@ -47,6 +54,7 @@ public final class MainActivity extends Activity {
     private TextView statistics;
     private TextView feedback;
     private Button activate;
+    private Button scan;
     private Button pause;
     private Button retry;
     private Button test;
@@ -125,7 +133,14 @@ public final class MainActivity extends Activity {
         LinearLayout pairing = card();
         add(page, pairing, 16);
         add(pairing, text("配对电脑", 19, INK, true), 0);
-        add(pairing, text("输入电脑接收端显示的地址和密钥。", 14, SECONDARY, false), 8);
+        scan = button("扫码配对", true);
+        scan.setOnClickListener(view -> onScan());
+        add(pairing, scan, 12);
+        feedback = text("", 14, SECONDARY, false);
+        feedback.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
+        feedback.setVisibility(View.GONE);
+        add(pairing, feedback, 8);
+        add(pairing, text("也可以手动填写电脑端显示的地址和密钥。", 14, SECONDARY, false), 12);
 
         address = field("http://192.168.1.10:8765",
                 InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
@@ -134,17 +149,13 @@ public final class MainActivity extends Activity {
                 InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
         labelField(pairing, "配对密钥", secret);
 
-        activate = button("开始自动上传", true);
+        activate = button("开始自动上传", false);
         activate.setOnClickListener(view -> onActivate());
         add(pairing, activate, 18);
 
         test = button("测试连接", false);
         test.setOnClickListener(view -> onTest());
         add(pairing, test, 8);
-        feedback = text("", 14, SECONDARY, false);
-        feedback.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
-        feedback.setVisibility(View.GONE);
-        add(pairing, feedback, 8);
 
         pause = button("暂停自动上传", false);
         pause.setOnClickListener(view -> onPauseUpload());
@@ -164,9 +175,97 @@ public final class MainActivity extends Activity {
 
     private void onActivate() {
         Settings.Configuration configuration = readConfiguration();
-        if (configuration == null) {
+        if (configuration != null) {
+            activate(configuration);
+        }
+    }
+
+    private void onScan() {
+        if (!getPackageManager().hasSystemFeature(PackageManager.FEATURE_CAMERA_ANY)) {
+            showFeedback("这台手机没有可用的摄像头，请手动配对。");
             return;
         }
+        if (Settings.granted(this, Manifest.permission.CAMERA)) {
+            openScanner();
+        } else {
+            requestPermissions(new String[]{Manifest.permission.CAMERA}, CAMERA_PERMISSION_REQUEST);
+        }
+    }
+
+    private void openScanner() {
+        ScanOptions options = new ScanOptions()
+                .setDesiredBarcodeFormats(ScanOptions.QR_CODE)
+                .setOrientationLocked(false)
+                .setBeepEnabled(false)
+                .setPrompt("请扫描你电脑接收端显示的配对二维码");
+        startActivityForResult(options.createScanIntent(this), QR_SCAN_REQUEST);
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode != QR_SCAN_REQUEST || resultCode != RESULT_OK || data == null) {
+            return;
+        }
+        PairingClient.Request request;
+        try {
+            request = PairingClient.readQr(ScanIntentResult.parseActivityResult(resultCode, data).getContents());
+        } catch (IllegalArgumentException invalid) {
+            showFeedback(invalid.getMessage());
+            return;
+        }
+
+        setPairingBusy(true);
+        showFeedback("正在与电脑配对…");
+        connectionTest.execute(() -> {
+            try {
+                Settings.Configuration configuration = PairingClient.pair(
+                        request, settings.installationId(), pairingDeviceName());
+                main.post(() -> finishPairing(configuration, null));
+            } catch (PairingClient.PairingFailure rejected) {
+                main.post(() -> finishPairing(null, rejected.getMessage()));
+            } catch (IOException disconnected) {
+                main.post(() -> finishPairing(null, "无法完成配对。请确认手机和电脑连接同一 Wi-Fi。"));
+            }
+        });
+    }
+
+    private static String pairingDeviceName() {
+        String label = Build.MODEL.replaceAll("\\p{Cntrl}", "").trim();
+        if (label.isEmpty() || Build.UNKNOWN.equalsIgnoreCase(label)) {
+            return "Android 手机";
+        }
+        if (label.codePointCount(0, label.length()) > 80) {
+            return label.substring(0, label.offsetByCodePoints(0, 80));
+        }
+        return label;
+    }
+
+    private void setPairingBusy(boolean busy) {
+        for (View control : new View[]{scan, activate, test, pause, retry, address, secret}) {
+            control.setEnabled(!busy);
+        }
+    }
+
+    private void finishPairing(Settings.Configuration configuration, String error) {
+        if (isDestroyed()) {
+            return;
+        }
+        setPairingBusy(false);
+        if (configuration == null) {
+            showFeedback(error);
+            return;
+        }
+        address.setText(configuration.origin());
+        secret.setText(configuration.token());
+        if (!Settings.hasMediaAccess(this)) {
+            settings.saveConfiguration(configuration);
+            showFeedback("已配对电脑，请授权访问照片和视频后开启自动上传。");
+        }
+        activate(configuration);
+    }
+
+    private void activate(Settings.Configuration configuration) {
         if (!Settings.hasMediaAccess(this)) {
             awaitingPermission = configuration;
             requestPermissions(Settings.mediaPermissions(), MEDIA_PERMISSION_REQUEST);
@@ -215,6 +314,7 @@ public final class MainActivity extends Activity {
             return;
         }
         test.setEnabled(false);
+        scan.setEnabled(false);
         showFeedback("正在连接电脑…");
         connectionTest.execute(() -> {
             String result;
@@ -230,6 +330,7 @@ public final class MainActivity extends Activity {
                 if (!isDestroyed()) {
                     showFeedback(message);
                     test.setEnabled(true);
+                    scan.setEnabled(true);
                 }
             });
         });
@@ -247,12 +348,20 @@ public final class MainActivity extends Activity {
     private void showFeedback(String message) {
         feedback.setText(message);
         feedback.setVisibility(View.VISIBLE);
+        feedback.post(() -> feedback.requestRectangleOnScreen(
+                new Rect(0, 0, feedback.getWidth(), feedback.getHeight())));
     }
 
     @Override
     public void onRequestPermissionsResult(int code, String[] permissions, int[] results) {
         super.onRequestPermissionsResult(code, permissions, results);
-        if (code == MEDIA_PERMISSION_REQUEST) {
+        if (code == CAMERA_PERMISSION_REQUEST) {
+            if (Settings.granted(this, Manifest.permission.CAMERA)) {
+                openScanner();
+            } else {
+                showFeedback("请在系统设置中允许使用摄像头，或手动输入电脑地址和配对密钥。");
+            }
+        } else if (code == MEDIA_PERMISSION_REQUEST) {
             Settings.Configuration requested = awaitingPermission;
             awaitingPermission = null;
             if (!Settings.hasMediaAccess(this)) {

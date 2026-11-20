@@ -23,7 +23,7 @@ final class SyncModel: ObservableObject {
 
     @Published private var state = SavedState()
     @Published private(set) var permission = PHPhotoLibrary.authorizationStatus(for: .readWrite)
-    @Published private(set) var lastStatus = "请先填写电脑地址和配对码。"
+    @Published private(set) var lastStatus = "请先配对电脑。"
     @Published private(set) var pending = 0
     @Published private(set) var running = false
 
@@ -85,29 +85,51 @@ final class SyncModel: ObservableObject {
         load()
         guard loaded else { return }
         do {
-            let nextSettings = try ReceiverSettings(address: address, token: token)
-            guard nextSettings != settings else {
-                lastStatus = "已保存电脑配置。"
-                return
-            }
-            var next = state
-            next.settings = nextSettings
-            next.failed.removeAll()
-            try save(next)
-            scanTask?.cancel()
-            retryAfter = nil
-            lastStatus = "已保存电脑配置。"
-            startScan()
+            try applySettings(ReceiverSettings(address: address, token: token))
         } catch {
             lastStatus = error.localizedDescription
         }
+    }
+
+    func pair(scannedValue: String) async throws -> ReceiverSettings {
+        let link = try PairingLink(scannedValue: scannedValue)
+        load()
+        guard loaded else { throw ReceiverIssue.unavailableStorage }
+        if !FileManager.default.fileExists(atPath: stateURL.path) {
+            try save(state)
+        }
+
+        var deviceName = UIDevice.current.name.components(separatedBy: .controlCharacters).joined()
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        while deviceName.unicodeScalars.count > 80 {
+            deviceName.removeLast()
+        }
+        let settings = try await receiver.pair(link, deviceID: state.installationID,
+                                               deviceName: deviceName.isEmpty ? "iPhone" : deviceName)
+        try applySettings(settings)
+        return settings
+    }
+
+    private func applySettings(_ nextSettings: ReceiverSettings) throws {
+        guard nextSettings != settings else {
+            lastStatus = "已保存电脑配置。"
+            return
+        }
+        var next = state
+        next.settings = nextSettings
+        next.failed.removeAll()
+        try save(next)
+        scanTask?.cancel()
+        retryAfter = nil
+        lastStatus = "已保存电脑配置。"
+        startScan()
     }
 
     func testSettings(address: String, token: String) async -> String {
         do {
             let candidate = try ReceiverSettings(address: address, token: token)
             try await receiver.test(candidate)
-            return "已连通电脑，配对码将在首次上传时验证。"
+            return "已连通电脑，配对凭据将在首次上传时验证。"
         } catch {
             return "连接测试失败。\(error.localizedDescription)"
         }
@@ -316,7 +338,7 @@ final class SyncModel: ObservableObject {
                     lastStatus = detail
                 case 401, 403:
                     retryAfter = Date().addingTimeInterval(60)
-                    lastStatus = "配对码无效，请核对电脑端显示的配对码。"
+                    lastStatus = "配对凭据无效，请重新扫码配对或核对手动配对码。"
                     return
                 default:
                     retryAfter = Date().addingTimeInterval(30)
