@@ -1,0 +1,59 @@
+name: Build HarmonyOS HAP
+'on':
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ${{ vars.HARMONY_RUNNER_LABEL || 'ubuntu-latest' }}
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up DevEco Command Line Tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          df -h "$RUNNER_TEMP"
+          tool_dir="$(mktemp -d "$RUNNER_TEMP/deveco.XXXXXX")"
+          archive="$tool_dir/deveco.zip"
+          curl --fail --silent --show-error --location --retry 2 \
+            --proto '=https' --proto-redir '=https' \
+            --output "$archive" \
+            'https://repo.huaweicloud.com/harmonyos/ohpm/5.0.3/commandline-tools-linux-x64-5.0.3.906.zip'
+          printf '%s  %s\n' \
+            'c6fe61299e1b05e4023e643a319ee74c3eb369af7edecd5c3f1795b16f9db6af' "$archive" \
+            | sha256sum --check --status
+          unzip -q "$archive" -d "$tool_dir"
+          rm -f -- "$archive"
+          tool_bin="$tool_dir/command-line-tools/bin"
+          test -x "$tool_bin/hvigorw"
+          test -x "$tool_bin/ohpm"
+          printf '%s\n' "$tool_bin" >> "$GITHUB_PATH"
+
+      - name: Build the entry HAP
+        working-directory: harmonyos
+        shell: bash
+        run: |
+          set -euo pipefail
+          ohpm install --all
+          (cd entry && ohpm install --all)
+          hvigorw --mode module -p product=default -p module=entry@default \
+            -p buildMode=debug assembleHap --no-daemon
+
+      - name: Upload the HAP
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenrelay-harmonyos-hap
+          path: harmonyos/entry/build/default/outputs/default/*.hap
+          if-no-files-found: error
