@@ -27,10 +27,52 @@ jobs:
           df -h "$RUNNER_TEMP"
           tool_dir="$(mktemp -d "$RUNNER_TEMP/deveco.XXXXXX")"
           archive="$tool_dir/deveco.zip"
-          curl --fail --silent --show-error --location --retry 2 \
-            --proto '=https' --proto-redir '=https' \
-            --output "$archive" \
-            'https://repo.huaweicloud.com/harmonyos/ohpm/5.0.3/commandline-tools-linux-x64-5.0.3.906.zip'
+          tools_path='harmonyos/ohpm/5.0.3/commandline-tools-linux-x64-5.0.3.906.zip'
+          primary="https://mirrors.huaweicloud.com/$tools_path"
+          secondary="https://repo.huaweicloud.com/$tools_path"
+          archive_bytes=3225154486
+          part_count=8
+          part_bytes=$(((archive_bytes + part_count - 1) / part_count))
+
+          download_part() {
+            local part="$1" first="$2" second="$3"
+            local start=$((part * part_bytes))
+            local stop=$((start + part_bytes - 1))
+            if ((stop >= archive_bytes)); then stop=$((archive_bytes - 1)); fi
+            local size=$((stop - start + 1))
+            local name url code
+            name=$(printf '%s.part.%02d' "$archive" "$part")
+            for url in "$first" "$second"; do
+              if code=$(curl --fail --silent --show-error --location \
+                --connect-timeout 20 --max-time 150 --speed-limit 32768 --speed-time 45 \
+                --proto '=https' --proto-redir '=https' \
+                --range "$start-$stop" --max-filesize "$size" \
+                --write-out '%{http_code}' --output "$name" "$url") && \
+                [[ "$code" == 206 && "$(stat -c '%s' "$name")" == "$size" ]]; then
+                printf 'Downloaded toolchain part %s/%s\n' "$((part + 1))" "$part_count"
+                return
+              fi
+            done
+            echo "::error::Both archive mirrors failed on toolchain part $((part + 1))."
+            return 1
+          }
+
+          pids=()
+          for ((part = 0; part < part_count; part++)); do
+            if ((part % 2 == 0)); then
+              download_part "$part" "$primary" "$secondary" &
+            else
+              download_part "$part" "$secondary" "$primary" &
+            fi
+            pids+=("$!")
+          done
+          failed=0
+          for pid in "${pids[@]}"; do
+            if ! wait "$pid"; then failed=1; fi
+          done
+          if ((failed)); then exit 1; fi
+          cat "$archive".part.* > "$archive"
+          rm -f -- "$archive".part.*
           printf '%s  %s\n' \
             'c6fe61299e1b05e4023e643a319ee74c3eb369af7edecd5c3f1795b16f9db6af' "$archive" \
             | sha256sum --check --status
