@@ -24,7 +24,7 @@ import (
 	"time"
 )
 
-const version = "0.3.0"
+const version = "0.4.0"
 
 //go:embed ui/index.html ui/style.css ui/app.js
 var dashboard embed.FS
@@ -40,7 +40,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	folder := flag.String("folder", filepath.Join(home, "ScreenRelay"), "directory for received captures")
+	folder := flag.String("folder", "", "directory for received captures (overrides saved location for this launch)")
 	listen := flag.String("listen", "0.0.0.0:8765", "address for phone uploads")
 	noOpen := flag.Bool("no-open", false, "do not open the dashboard in the browser")
 	maxMiB := flag.Int64("max-mib", 2048, "maximum size of one upload, in MiB")
@@ -70,10 +70,6 @@ func run() error {
 	}
 	defer receiver.Close()
 
-	store, err := loadStore(*folder)
-	if err != nil {
-		return fmt.Errorf("open receive folder: %w", err)
-	}
 	configDir, err := os.UserConfigDir()
 	if err != nil {
 		return fmt.Errorf("locate receiver configuration: %w", err)
@@ -81,6 +77,11 @@ func run() error {
 	configDir = filepath.Join(configDir, "ScreenRelay")
 	if err := os.MkdirAll(configDir, 0o700); err != nil {
 		return fmt.Errorf("open receiver configuration: %w", err)
+	}
+	locations, err := loadReceiveLocations(filepath.Join(configDir, "receive-locations.json"),
+		filepath.Join(home, "ScreenRelay"), *folder)
+	if err != nil {
+		return fmt.Errorf("open receive folder: %w", err)
 	}
 	token, err := pairingToken(configDir)
 	if err != nil {
@@ -98,7 +99,7 @@ func run() error {
 	defer local.Close()
 
 	service := &relay{
-		store: store, token: token, pairings: pairings, maxBytes: *maxMiB << 20,
+		locations: locations, token: token, pairings: pairings, maxBytes: *maxMiB << 20,
 		uploads: make(chan struct{}, 4), scheme: scheme,
 		listening: receiver.Addr().(*net.TCPAddr), dashboardHost: local.Addr().String(),
 	}
@@ -123,7 +124,7 @@ func run() error {
 	go func() { failures <- adminServer.Serve(local) }()
 
 	dashboardURL := "http://" + service.dashboardHost
-	fmt.Printf("截屏快传 %s\n电脑控制台  %s\n保存目录  %s\n", version, dashboardURL, store.root)
+	fmt.Printf("截屏快传 %s\n电脑控制台  %s\n保存目录  %s\n", version, dashboardURL, locations.current().root)
 	for _, address := range advertiseAddresses(service.listening, scheme) {
 		fmt.Println("手机端地址  " + address)
 	}

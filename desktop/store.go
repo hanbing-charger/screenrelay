@@ -50,6 +50,13 @@ type captureStore struct {
 }
 
 func loadStore(folder string) (*captureStore, error) {
+	if err := os.MkdirAll(filepath.Join(folder, stateDirectory), 0o700); err != nil {
+		return nil, err
+	}
+	return readStore(folder)
+}
+
+func readStore(folder string) (*captureStore, error) {
 	root, err := filepath.Abs(folder)
 	if err != nil {
 		return nil, err
@@ -57,9 +64,6 @@ func loadStore(folder string) (*captureStore, error) {
 	store := &captureStore{
 		root: root, state: filepath.Join(root, stateDirectory),
 		records: make(map[string]capture),
-	}
-	if err := os.MkdirAll(store.state, 0o700); err != nil {
-		return nil, err
 	}
 	files, err := os.ReadDir(store.state)
 	if err != nil {
@@ -101,10 +105,9 @@ func existingFile(record capture, root string) bool {
 }
 
 func (s *captureStore) save(body io.Reader, length int64, uploadID, name, kind string) (capture, bool, error) {
-	id := hex.EncodeToString(randBytes(32))
-	if uploadID != "" {
-		encoded := sha256.Sum256([]byte(uploadID))
-		id = hex.EncodeToString(encoded[:])
+	id := captureIDForUpload(uploadID)
+	if uploadID == "" {
+		id = hex.EncodeToString(randBytes(32))
 	}
 
 	file, err := os.CreateTemp(s.state, "incoming-*")

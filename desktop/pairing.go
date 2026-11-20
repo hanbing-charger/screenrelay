@@ -150,7 +150,7 @@ func (p *pairingRegistry) summaries() []pairedDeviceSummary {
 	return devices
 }
 
-func readPairingJSON(w http.ResponseWriter, r *http.Request, target any) error {
+func readSmallJSON(w http.ResponseWriter, r *http.Request, target any) error {
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 4096))
 	if err != nil {
 		return err
@@ -166,7 +166,7 @@ func (s *relay) showPairingQR(w http.ResponseWriter, r *http.Request) {
 	var request struct {
 		Address string `json:"address"`
 	}
-	if err := readPairingJSON(w, r, &request); err != nil ||
+	if err := readSmallJSON(w, r, &request); err != nil ||
 		!slices.Contains(advertiseAddresses(s.listening, s.scheme), request.Address) {
 		writeError(w, http.StatusBadRequest, "请选择有效的局域网接收地址")
 		return
@@ -197,7 +197,7 @@ func (s *relay) pairDevice(w http.ResponseWriter, r *http.Request) {
 	// Pairing requests have small bodies and need not use the upload timeout.
 	http.NewResponseController(w).SetReadDeadline(time.Now().Add(8 * time.Second))
 	var request devicePairing
-	if err := readPairingJSON(w, r, &request); err != nil {
+	if err := readSmallJSON(w, r, &request); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid pairing request")
 		return
 	}

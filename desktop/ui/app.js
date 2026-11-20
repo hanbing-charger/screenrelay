@@ -23,6 +23,14 @@ const elements = {
   folder: document.getElementById("folder-path"),
   openFolder: document.getElementById("open-folder"),
   folderFeedback: document.getElementById("folder-feedback"),
+  editFolder: document.getElementById("edit-folder"),
+  folderDialog: document.getElementById("folder-dialog"),
+  folderForm: document.getElementById("folder-form"),
+  folderInput: document.getElementById("folder-input"),
+  folderEditFeedback: document.getElementById("folder-edit-feedback"),
+  pickFolder: document.getElementById("pick-folder"),
+  cancelFolder: document.getElementById("cancel-folder"),
+  saveFolder: document.getElementById("save-folder"),
   fileCount: document.getElementById("file-count"),
   empty: document.getElementById("empty-state"),
   emptyTitle: document.getElementById("empty-title"),
@@ -45,8 +53,12 @@ let previousAddresses = "";
 let previousDevices = "";
 let previousFiles = "";
 let statusLoaded = false;
-let folderAvailable = false;
+let statusRequest;
+let statusTimer;
+let folderPath = "";
 let folderOpening = false;
+let folderEditorAction = "";
+let folderPickerRequest;
 let pairingRequest;
 let pairingTimer;
 
@@ -58,6 +70,99 @@ function setStatus(label, state) {
 function setFeedback(element, message, isError = false) {
   element.textContent = message;
   element.dataset.error = String(isError);
+}
+
+function updateFolder(folder) {
+  folderPath = folder;
+  const label = folder || "保存位置不可用";
+  if (elements.folder.textContent !== label) elements.folder.textContent = label;
+  elements.openFolder.disabled = !folderPath || folderOpening;
+  elements.editFolder.disabled = !folderPath;
+}
+
+function setFolderEditorAction(action) {
+  folderEditorAction = action;
+  const busy = Boolean(action);
+  elements.folderInput.readOnly = busy;
+  elements.pickFolder.disabled = busy;
+  elements.saveFolder.disabled = busy;
+  elements.cancelFolder.disabled = action === "saving";
+}
+
+async function pickFolder() {
+  if (folderEditorAction) return;
+  const controller = new AbortController();
+  folderPickerRequest = controller;
+  setFolderEditorAction("picking");
+  setFeedback(elements.folderEditFeedback, "正在等待系统选择文件夹…");
+  let picked = false;
+  try {
+    const response = await fetch("/api/folder/pick", {
+      method: "POST",
+      headers: { "X-ScreenRelay": "1" },
+      signal: controller.signal,
+    });
+    const data = response.status === 204 ? null : await response.json().catch(() => null);
+    if (folderPickerRequest !== controller || !elements.folderDialog.open) return;
+    if (response.status === 204) {
+      setFeedback(elements.folderEditFeedback, "");
+    } else if (response.ok && typeof data?.path === "string" && data.path) {
+      elements.folderInput.value = data.path;
+      setFeedback(elements.folderEditFeedback, "");
+      picked = true;
+    } else {
+      setFeedback(elements.folderEditFeedback, data?.error || "无法打开文件夹选择器。可以手动输入路径。", true);
+    }
+  } catch {
+    if (folderPickerRequest === controller && elements.folderDialog.open) {
+      setFeedback(elements.folderEditFeedback, "无法打开文件夹选择器。可以手动输入路径。", true);
+    }
+  } finally {
+    if (folderPickerRequest === controller && elements.folderDialog.open) {
+      folderPickerRequest = undefined;
+      setFolderEditorAction("");
+      (picked ? elements.folderInput : elements.pickFolder).focus();
+    }
+  }
+}
+
+async function saveFolder(event) {
+  event.preventDefault();
+  if (folderEditorAction) return;
+  const path = elements.folderInput.value;
+  if (!path.trim()) {
+    setFeedback(elements.folderEditFeedback, "请输入文件夹的绝对路径。", true);
+    elements.folderInput.focus();
+    return;
+  }
+  setFolderEditorAction("saving");
+  setFeedback(elements.folderEditFeedback, "正在保存…");
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 12000);
+  try {
+    const response = await fetch("/api/folder", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-ScreenRelay": "1" },
+      body: JSON.stringify({ path }),
+      signal: controller.signal,
+    });
+    const data = await response.json().catch(() => null);
+    if (!response.ok || typeof data?.folder !== "string" || !data.folder) {
+      setFeedback(elements.folderEditFeedback, data?.error || "无法保存，请检查文件夹路径后重试。", true);
+      return;
+    }
+    updateFolder(data.folder);
+    elements.folderDialog.close();
+    setFeedback(elements.folderFeedback, "保存位置已更新");
+    refreshStatus();
+  } catch {
+    setFeedback(elements.folderEditFeedback, "保存请求未完成，请稍后重试。", true);
+    refreshStatus();
+  } finally {
+    clearTimeout(timeout);
+    setFolderEditorAction("");
+    if (elements.folderDialog.open) elements.folderInput.focus();
+  }
 }
 
 function updateAddresses(addresses) {
@@ -284,10 +389,7 @@ function showStatus(data) {
   elements.copyCode.disabled = !token;
   elements.toggleCode.disabled = !token;
 
-  folderAvailable = Boolean(folder);
-  const folderLabel = folder || "保存位置不可用";
-  if (elements.folder.textContent !== folderLabel) elements.folder.textContent = folderLabel;
-  elements.openFolder.disabled = !folderAvailable || folderOpening;
+  updateFolder(folder);
   updateFiles(files);
 
   const version = typeof data.version === "string" ? data.version : "";
@@ -297,28 +399,36 @@ function showStatus(data) {
 }
 
 async function refreshStatus() {
+  clearTimeout(statusTimer);
+  statusRequest?.abort();
   const controller = new AbortController();
+  statusRequest = controller;
   const timeout = setTimeout(() => controller.abort(), 3000);
   try {
     const response = await fetch("/api/status", { cache: "no-store", signal: controller.signal });
     if (!response.ok) throw new Error("status");
     const data = await response.json();
+    if (statusRequest !== controller) return;
     showStatus(data);
     statusLoaded = true;
   } catch {
+    if (statusRequest !== controller) return;
     setStatus("无法连接接收端", "unavailable");
     elements.openPairing.disabled = true;
     if (!statusLoaded) {
       elements.address.replaceChildren(new Option("接收地址不可用", ""));
       elements.code.placeholder = "配对码不可用";
-      elements.folder.textContent = "保存位置不可用";
+      updateFolder("");
       elements.emptyTitle.textContent = "暂时无法读取接收记录";
       elements.emptyDescription.textContent = "启动电脑接收端后会自动重连。";
       elements.devicesEmpty.textContent = "暂时无法读取已配对设备";
     }
   } finally {
     clearTimeout(timeout);
-    setTimeout(refreshStatus, 4000);
+    if (statusRequest === controller) {
+      statusRequest = undefined;
+      statusTimer = setTimeout(refreshStatus, 4000);
+    }
   }
 }
 
@@ -391,6 +501,24 @@ elements.copyCode.addEventListener("click", async () => {
 });
 elements.toggleCode.addEventListener("click", () => setCodeVisibility(elements.code.type === "password"));
 
+elements.editFolder.addEventListener("click", () => {
+  elements.folderInput.value = folderPath;
+  setFeedback(elements.folderEditFeedback, "");
+  elements.folderDialog.showModal();
+});
+elements.folderForm.addEventListener("submit", saveFolder);
+elements.pickFolder.addEventListener("click", pickFolder);
+elements.cancelFolder.addEventListener("click", () => elements.folderDialog.close());
+elements.folderDialog.addEventListener("cancel", (event) => {
+  if (folderEditorAction === "saving") event.preventDefault();
+});
+elements.folderDialog.addEventListener("close", () => {
+  if (elements.folderDialog.open) return;
+  folderPickerRequest?.abort();
+  folderPickerRequest = undefined;
+  setFolderEditorAction("");
+});
+
 elements.openFolder.addEventListener("click", async () => {
   folderOpening = true;
   elements.openFolder.disabled = true;
@@ -407,7 +535,7 @@ elements.openFolder.addEventListener("click", async () => {
     setFeedback(elements.folderFeedback, "无法打开文件夹，请在文件管理器中输入上方路径。", true);
   } finally {
     folderOpening = false;
-    elements.openFolder.disabled = !folderAvailable;
+    elements.openFolder.disabled = !folderPath;
     elements.openFolder.removeAttribute("aria-busy");
   }
 });

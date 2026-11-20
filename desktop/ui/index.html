@@ -59,7 +59,10 @@
         <span class="folder-mark" aria-hidden="true"><span class="folder-icon"></span></span>
         <h2 id="destination-heading">保存位置</h2>
         <p class="folder-path" id="folder-path" dir="auto">正在获取保存位置</p>
-        <button type="button" class="open-folder" id="open-folder" disabled>打开文件夹<span aria-hidden="true">↗</span></button>
+        <div class="folder-actions">
+          <button type="button" class="primary" id="open-folder" disabled>打开文件夹<span aria-hidden="true">↗</span></button>
+          <button type="button" id="edit-folder" aria-haspopup="dialog" aria-controls="folder-dialog" disabled>修改保存位置</button>
+        </div>
         <p class="feedback" id="folder-feedback" role="status"></p>
       </section>
     </div>
@@ -87,6 +90,25 @@
     </section>
     <footer class="footer" id="version" hidden></footer>
   </main>
+
+  <dialog class="folder-dialog" id="folder-dialog" aria-labelledby="folder-dialog-heading" aria-describedby="folder-help">
+    <h2 id="folder-dialog-heading">修改保存位置</h2>
+    <p class="dialog-copy" id="folder-help">选择文件夹或输入绝对路径。新接收的文件会保存到该位置。</p>
+    <form id="folder-form">
+      <div class="field">
+        <label for="folder-input">文件夹路径</label>
+        <div class="field-controls">
+          <input class="value" type="text" id="folder-input" dir="auto" autocomplete="off" spellcheck="false" required autofocus>
+          <button type="button" id="pick-folder">选择文件夹</button>
+        </div>
+      </div>
+      <p class="feedback" id="folder-edit-feedback" role="status"></p>
+      <div class="dialog-actions">
+        <button type="button" id="cancel-folder">取消</button>
+        <button type="submit" class="primary" id="save-folder">保存</button>
+      </div>
+    </form>
+  </dialog>
 
   <dialog class="pairing-dialog" id="pairing-dialog" aria-labelledby="pairing-dialog-heading" aria-describedby="pairing-instructions">
     <div class="dialog-heading">

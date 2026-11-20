@@ -116,7 +116,7 @@ private struct PairingView: View {
                 showingScanner = true
             } label: {
                 HStack {
-                    Image(systemName: "qrcode.viewfinder")
+                    Image(systemName: "qrcode")
                     Text("扫描电脑配对二维码")
                 }
             }

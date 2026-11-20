@@ -17,7 +17,7 @@ import (
 
 func testRelay(t *testing.T, folder string) *relay {
 	t.Helper()
-	store, err := loadStore(folder)
+	locations, err := loadReceiveLocations(filepath.Join(folder, "receive-locations.json"), folder, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -26,7 +26,7 @@ func testRelay(t *testing.T, folder string) *relay {
 		t.Fatal(err)
 	}
 	return &relay{
-		store: store, token: "test-pairing-token", pairings: pairings, maxBytes: 1024,
+		locations: locations, token: "test-pairing-token", pairings: pairings, maxBytes: 1024,
 		uploads: make(chan struct{}, 4), scheme: "http",
 		listening:     &net.TCPAddr{IP: net.IPv4(192, 168, 0, 1), Port: 8765},
 		dashboardHost: "127.0.0.1:40000",
@@ -97,7 +97,7 @@ func TestUploadAndReplayAfterRestart(t *testing.T) {
 		t.Fatalf("unexpected preview: %d, %v", preview.Code, preview.Header())
 	}
 
-	records := service.store.recent(40)
+	records := service.locations.recent(40)
 	if err := os.Remove(records[1].path(folder)); err != nil {
 		t.Fatal(err)
 	}
@@ -143,7 +143,7 @@ func TestUploadValidationAndIsolation(t *testing.T) {
 			}
 		})
 	}
-	entries, err := os.ReadDir(filepath.Join(service.store.root, stateDirectory))
+	entries, err := os.ReadDir(filepath.Join(service.locations.current().root, stateDirectory))
 	if err != nil || len(entries) != 0 {
 		t.Fatalf("failed requests left partial files: %v %v", entries, err)
 	}
@@ -188,7 +188,7 @@ func TestConcurrentDuplicateUploads(t *testing.T) {
 			t.Errorf("retry returned %d", code)
 		}
 	}
-	if created != 1 || len(service.store.recent(40)) != 1 {
+	if created != 1 || len(service.locations.recent(40)) != 1 {
 		t.Fatalf("expected one committed capture, got %d", created)
 	}
 }
@@ -225,13 +225,89 @@ func TestStalledUploadCanRetryWithSameID(t *testing.T) {
 	if delay := time.Until(response.receivedDeadline); delay < uploadIdleTime-time.Second || delay > uploadIdleTime {
 		t.Fatalf("unbounded or incorrect upload idle deadline: %s", delay)
 	}
-	files, err := os.ReadDir(service.store.state)
+	files, err := os.ReadDir(service.locations.current().state)
 	if err != nil || len(files) != 0 {
 		t.Fatalf("timed out upload left data behind: %v %v", files, err)
 	}
 
 	retry := sendCapture(service, "stalled-capture", "fresh.mp4", "screen-recording", []byte("complete"))
-	if retry.Code != http.StatusCreated || len(service.store.recent(40)) != 1 {
+	if retry.Code != http.StatusCreated || len(service.locations.recent(40)) != 1 {
 		t.Fatalf("could not commit the retried upload: %d %s", retry.Code, retry.Body)
+	}
+}
+
+func changeFolderFromDashboard(s *relay, path, origin string) *httptest.ResponseRecorder {
+	body, _ := json.Marshal(map[string]string{"path": path})
+	request := httptest.NewRequest(http.MethodPost, "http://"+s.dashboardHost+"/api/folder", bytes.NewReader(body))
+	request.RemoteAddr = "127.0.0.1:40001"
+	request.Header.Set("X-ScreenRelay", "1")
+	request.Header.Set("Origin", origin)
+	response := httptest.NewRecorder()
+	s.dashboardAPI().ServeHTTP(response, request)
+	return response
+}
+
+func TestDashboardCanChangeFolderWithoutLosingReceivedFiles(t *testing.T) {
+	parent := t.TempDir()
+	initial := filepath.Join(parent, "first")
+	next := filepath.Join(parent, "新保存目录")
+	service := testRelay(t, initial)
+
+	origin := "http://" + service.dashboardHost
+	if got := changeFolderFromDashboard(service, next, "https://other.example"); got.Code != http.StatusForbidden {
+		t.Fatalf("cross-origin save location request got %d", got.Code)
+	}
+	if got := changeFolderFromDashboard(service, "relative/new", origin); got.Code != http.StatusBadRequest {
+		t.Fatalf("relative dashboard save location got %d", got.Code)
+	}
+	ordinaryFile := filepath.Join(parent, "not-a-directory")
+	if err := os.WriteFile(ordinaryFile, []byte("keep me"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := changeFolderFromDashboard(service, ordinaryFile, origin); got.Code != http.StatusBadRequest {
+		t.Fatalf("save location pointing to a file got %d", got.Code)
+	}
+	if service.locations.current().root != initial {
+		t.Fatal("rejected directory replaced the active folder")
+	}
+
+	content := []byte("screenshot saved before the change")
+	old := sendCapture(service, "old-device.capture", "原截图.png", "screenshot", content)
+	if old.Code != http.StatusCreated {
+		t.Fatalf("first upload: %d %s", old.Code, old.Body)
+	}
+	var oldReceipt struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(old.Body.Bytes(), &oldReceipt); err != nil {
+		t.Fatal(err)
+	}
+
+	changed := changeFolderFromDashboard(service, next, origin)
+	var selected map[string]string
+	if err := json.Unmarshal(changed.Body.Bytes(), &selected); err != nil ||
+		changed.Code != http.StatusOK || selected["folder"] != next {
+		t.Fatalf("save location change failed: %d %s", changed.Code, changed.Body)
+	}
+	if retry := sendCapture(service, "old-device.capture", "原截图.png", "screenshot", content); retry.Code != http.StatusOK {
+		t.Fatalf("existing upload retried after the change got %d", retry.Code)
+	}
+	if fresh := sendCapture(service, "new-device.capture", "新录屏.mp4", "screen-recording", []byte("video")); fresh.Code != http.StatusCreated {
+		t.Fatalf("new upload: %d %s", fresh.Code, fresh.Body)
+	}
+	if files := service.locations.current().recent(40); len(files) != 1 || files[0].Name != "新录屏.mp4" {
+		t.Fatalf("wrong files in new directory: %+v", files)
+	}
+
+	service = testRelay(t, initial)
+	response := localRequest(service, "/api/status")
+	var status dashboardStatus
+	if err := json.Unmarshal(response.Body.Bytes(), &status); err != nil ||
+		status.Folder != next || len(status.Recent) != 2 {
+		t.Fatalf("saved location or received-file list did not survive restart: %s", response.Body)
+	}
+	oldFile := localRequest(service, "/files/"+oldReceipt.ID+"?download=1")
+	if oldFile.Code != http.StatusOK || !bytes.Equal(oldFile.Body.Bytes(), content) {
+		t.Fatalf("previous download link was lost after switching folders: %d", oldFile.Code)
 	}
 }

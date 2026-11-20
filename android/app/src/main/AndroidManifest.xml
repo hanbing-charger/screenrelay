@@ -29,8 +29,13 @@
             </intent-filter>
         </activity>
         <activity android:name="com.journeyapps.barcodescanner.CaptureActivity"
-            android:exported="false" android:screenOrientation="fullSensor"
-            tools:replace="android:screenOrientation" />
+            tools:node="remove" />
+        <activity
+            android:name=".PairingScannerActivity"
+            android:exported="false"
+            android:screenOrientation="portrait"
+            android:theme="@style/zxing_CaptureTheme"
+            android:windowSoftInputMode="stateAlwaysHidden" />
         <service
             android:name=".WatchService"
             android:exported="false"

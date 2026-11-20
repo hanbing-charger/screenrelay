@@ -194,6 +194,7 @@ public final class MainActivity extends Activity {
 
     private void openScanner() {
         ScanOptions options = new ScanOptions()
+                .setCaptureActivity(PairingScannerActivity.class)
                 .setDesiredBarcodeFormats(ScanOptions.QR_CODE)
                 .setOrientationLocked(false)
                 .setBeepEnabled(false)

@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -46,7 +47,8 @@ func (s *uploadStream) Read(p []byte) (int, error) {
 }
 
 type relay struct {
-	store         *captureStore
+	locations     *receiveLocations
+	pickingFolder atomic.Bool
 	token         string
 	pairings      *pairingRegistry
 	maxBytes      int64
@@ -124,7 +126,9 @@ func (s *relay) upload(w http.ResponseWriter, r *http.Request) {
 		connection: http.NewResponseController(w),
 		hardLimit:  time.Now().Add(uploadDuration),
 	}
-	record, created, err := s.store.save(stream, r.ContentLength, uploadID, name, kind)
+	store, finish := s.locations.openUpload(uploadID)
+	defer finish()
+	record, created, err := store.save(stream, r.ContentLength, uploadID, name, kind)
 	switch {
 	case errors.Is(err, errUploadTimeout):
 		w.Header().Set("Retry-After", "5")
@@ -201,13 +205,15 @@ func (s *relay) dashboardAPI() http.Handler {
 	}
 	mux.HandleFunc("GET /api/status", s.status)
 	mux.HandleFunc("POST /api/pairing", s.showPairingQR)
+	mux.HandleFunc("POST /api/folder", s.changeReceiveFolder)
+	mux.HandleFunc("POST /api/folder/pick", s.pickReceiveFolder)
 	mux.HandleFunc("GET /files/{id}", s.serveCapture)
 	mux.HandleFunc("POST /api/open-folder", func(w http.ResponseWriter, r *http.Request) {
 		if !s.dashboardActionAllowed(r) {
 			writeError(w, http.StatusForbidden, "dashboard origin required")
 			return
 		}
-		if err := openDesktop(s.store.root, true); err != nil {
+		if err := openDesktop(s.locations.current().root, true); err != nil {
 			writeError(w, http.StatusInternalServerError, "无法打开保存目录")
 			return
 		}
@@ -235,9 +241,54 @@ func (s *relay) dashboardActionAllowed(r *http.Request) bool {
 		r.Header.Get("Origin") == "http://"+s.dashboardHost
 }
 
+func (s *relay) changeReceiveFolder(w http.ResponseWriter, r *http.Request) {
+	if !s.dashboardActionAllowed(r) {
+		writeError(w, http.StatusForbidden, "dashboard origin required")
+		return
+	}
+	var request struct {
+		Path string `json:"path"`
+	}
+	if err := readSmallJSON(w, r, &request); err != nil || !filepath.IsAbs(request.Path) {
+		writeError(w, http.StatusBadRequest, "请输入完整的保存路径，或选择文件夹。")
+		return
+	}
+	folder, err := s.locations.change(request.Path)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "无法修改保存位置。"+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"folder": folder})
+}
+
+func (s *relay) pickReceiveFolder(w http.ResponseWriter, r *http.Request) {
+	if !s.dashboardActionAllowed(r) {
+		writeError(w, http.StatusForbidden, "dashboard origin required")
+		return
+	}
+	if !s.pickingFolder.CompareAndSwap(false, true) {
+		writeError(w, http.StatusConflict, "文件夹选择窗口已打开。")
+		return
+	}
+	defer s.pickingFolder.Store(false)
+	path, err := pickReceiveFolder(r.Context(), s.locations.current().root)
+	if r.Context().Err() != nil {
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if path == "" {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"path": path})
+}
+
 func (s *relay) status(w http.ResponseWriter, r *http.Request) {
 	recent := []recentFile{}
-	for _, record := range s.store.recent(40) {
+	for _, record := range s.locations.recent(40) {
 		recent = append(recent, recentFile{
 			Name: record.Name, Kind: record.Kind, Size: record.Size,
 			ReceivedAt: record.ReceivedAt, URL: "/files/" + record.ID,
@@ -245,17 +296,17 @@ func (s *relay) status(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, dashboardStatus{
 		Version: version, Listening: true, Addresses: advertiseAddresses(s.listening, s.scheme),
-		Token: s.token, Folder: s.store.root, Recent: recent, Devices: s.pairings.summaries(),
+		Token: s.token, Folder: s.locations.current().root, Recent: recent, Devices: s.pairings.summaries(),
 	})
 }
 
 func (s *relay) serveCapture(w http.ResponseWriter, r *http.Request) {
-	record, ok := s.store.get(r.PathValue("id"))
-	if !ok || !existingFile(record, s.store.root) {
+	record, store, ok := s.locations.find(r.PathValue("id"))
+	if !ok {
 		http.NotFound(w, r)
 		return
 	}
-	file, err := os.Open(record.path(s.store.root))
+	file, err := os.Open(record.path(store.root))
 	if err != nil {
 		http.NotFound(w, r)
 		return
