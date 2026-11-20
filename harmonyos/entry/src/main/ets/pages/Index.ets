@@ -1,7 +1,10 @@
 import { common } from '@kit.AbilityKit'
 import { BusinessError } from '@kit.BasicServicesKit'
+import { DownloadReceiver, exportReceived } from '../relay/Download'
+import type { ReceivedFile } from '../relay/Download'
 import { selectCaptures } from '../relay/Media'
 import type { MediaKind } from '../relay/Media'
+import { scanDownloadCode } from '../relay/Pairing'
 import { Relay } from '../relay/Relay'
 import type { RelayStatus } from '../relay/Relay'
 
@@ -26,12 +29,18 @@ struct Index {
   @State private selectedUris: string[] = []
   @State private message: string = '配对电脑后即可发送截图和录屏。'
   @State private pairingMessage: string = ''
+  @State private downloadMessage: string = ''
+  @State private receivedDirectory: string = ''
+  @State private receivedFiles: ReceivedFile[] = []
   private selectedKind: MediaKind = 'screenshot'
   private relay: Relay | undefined = undefined
+  private receiver: DownloadReceiver | undefined = undefined
+  private context: common.UIAbilityContext | undefined = undefined
 
   aboutToAppear(): void {
+    const context = this.getUIContext().getHostContext() as common.UIAbilityContext
+    this.context = context
     try {
-      const context = this.getUIContext().getHostContext() as common.UIAbilityContext
       this.relay = new Relay(context, (status: RelayStatus): void => this.applyStatus(status))
       const status = this.relay.status()
       this.address = status.endpoint
@@ -39,6 +48,13 @@ struct Index {
       this.applyStatus(status)
     } catch (_) {
       this.message = '无法打开本地传输记录。请检查设备剩余空间后重新打开应用。'
+    }
+    try {
+      this.receiver = new DownloadReceiver(context.filesDir)
+      this.receivedDirectory = this.receiver.directory
+      this.receivedFiles = this.receiver.list()
+    } catch (_) {
+      this.downloadMessage = '无法打开接收目录。请检查设备存储空间。'
     }
   }
 
@@ -112,6 +128,45 @@ struct Index {
     }
   }
 
+  private async scanDownload(): Promise<void> {
+    const context = this.context
+    const receiver = this.receiver
+    if (context === undefined || receiver === undefined) {
+      return
+    }
+    this.downloadMessage = '正在扫描文件二维码…'
+    try {
+      const share = await scanDownloadCode(context)
+      if (share === undefined) {
+        this.downloadMessage = '已取消扫码。'
+        return
+      }
+      this.downloadMessage = '正在连接电脑…'
+      const file = await receiver.receive(share, (name: string, received: number, total: number): void => {
+        const percent = total > 0 ? Math.floor(received / total * 100) : 0
+        this.downloadMessage = '正在接收 ' + name + ' · ' + percent + '%'
+      })
+      this.receivedFiles = receiver.list()
+      this.downloadMessage = '已接收 ' + file.name
+    } catch (error) {
+      this.downloadMessage = (error as BusinessError).message || '接收失败，请重新扫码。'
+    }
+  }
+
+  private async exportDownload(file: ReceivedFile): Promise<void> {
+    const context = this.context
+    if (context === undefined) {
+      return
+    }
+    try {
+      if (await exportReceived(context, file)) {
+        this.downloadMessage = '已导出 ' + file.name
+      }
+    } catch (_) {
+      this.downloadMessage = '导出失败，请选择可写入的文件夹。'
+    }
+  }
+
   private async changeDetection(): Promise<void> {
     if (this.detecting) {
       this.relay?.disableDetection()
@@ -146,7 +201,7 @@ struct Index {
             .fontSize(32)
             .fontWeight(FontWeight.Bold)
             .fontColor(INK)
-          Text('将截图和录屏发送到同一局域网内的电脑。')
+          Text('与同一局域网内的电脑传输文件。')
             .fontSize(15)
             .fontColor(SUBTLE)
         }
@@ -199,6 +254,51 @@ struct Index {
               .onClick((): void => { this.action(() => this.checkConnection()) })
           }
           .width('100%')
+        }
+        .alignItems(HorizontalAlign.Start)
+        .backgroundColor(Color.White)
+        .border({ width: 1, color: BORDER })
+        .borderRadius(18)
+        .padding(16)
+        .width('100%')
+
+        Column({ space: 10 }) {
+          Text('从电脑接收')
+            .fontSize(20)
+            .fontWeight(FontWeight.Bold)
+            .fontColor(INK)
+          Button('扫码接收文件')
+            .width('100%')
+            .backgroundColor(ACCENT)
+            .enabled(!this.busy && this.receiver !== undefined)
+            .onClick((): void => { this.action(() => this.scanDownload()) })
+          if (this.downloadMessage) {
+            Text(this.downloadMessage)
+              .fontSize(14)
+              .lineHeight(21)
+              .fontColor(SUBTLE)
+          }
+          if (this.receivedFiles.length > 0) {
+            Text('应用内保存位置 ' + this.receivedDirectory)
+              .fontSize(12)
+              .fontColor(SUBTLE)
+            ForEach(this.receivedFiles, (file: ReceivedFile) => {
+              Row({ space: 8 }) {
+                Text(file.name)
+                  .layoutWeight(1)
+                  .maxLines(1)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+                  .fontSize(14)
+                  .fontColor(INK)
+                Button('导出')
+                  .backgroundColor(BACKGROUND)
+                  .fontColor(ACCENT)
+                  .enabled(!this.busy)
+                  .onClick((): void => { this.action(() => this.exportDownload(file)) })
+              }
+              .width('100%')
+            }, (file: ReceivedFile): string => file.path)
+          }
         }
         .alignItems(HorizontalAlign.Start)
         .backgroundColor(Color.White)

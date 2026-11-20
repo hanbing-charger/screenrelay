@@ -9,31 +9,39 @@ export interface PairingCode {
 }
 
 const PAIRING_PREFIX = 'screenrelay://pair?'
-const INVALID_CODE = '请扫描电脑端显示的截屏快传配对二维码。'
+const DOWNLOAD_PREFIX = 'screenrelay://download?'
 
-export function parsePairingCode(value: string): PairingCode {
-  if (!value.startsWith(PAIRING_PREFIX) || value.length > 2048) {
-    throw new Error(INVALID_CODE)
+function parseCode(value: string, prefix: string, invalid: string): PairingCode {
+  if (!value.startsWith(prefix) || value.length > 2048) {
+    throw new Error(invalid)
   }
-  const fields = value.slice(PAIRING_PREFIX.length).split('&')
+  const fields = value.slice(prefix.length).split('&')
   if (fields.length !== 3 ||
     fields.some((field: string): boolean => !/^(v|url|code)=[A-Za-z0-9._~%\-]+$/.test(field))) {
-    throw new Error(INVALID_CODE)
+    throw new Error(invalid)
   }
   const version = fields.find((field: string): boolean => field.startsWith('v='))
   const address = fields.find((field: string): boolean => field.startsWith('url='))
   const code = fields.find((field: string): boolean => field.startsWith('code='))
   if (version !== 'v=1' || address === undefined || code === undefined || !/^code=[A-Za-z0-9_-]{43}$/.test(code)) {
-    throw new Error(INVALID_CODE)
+    throw new Error(invalid)
   }
   try {
     return { endpoint: normalizeEndpoint(decodeURIComponent(address.slice(4))), code: code.slice(5) }
   } catch (_) {
-    throw new Error(INVALID_CODE)
+    throw new Error(invalid)
   }
 }
 
-export async function scanPairingCode(context: common.UIAbilityContext): Promise<PairingCode | undefined> {
+export function parsePairingCode(value: string): PairingCode {
+  return parseCode(value, PAIRING_PREFIX, '请扫描电脑端显示的截屏快传配对二维码。')
+}
+
+export function parseDownloadCode(value: string): PairingCode {
+  return parseCode(value, DOWNLOAD_PREFIX, '请扫描电脑端显示的截屏快传文件二维码。')
+}
+
+async function scanCode(context: common.UIAbilityContext): Promise<string | undefined> {
   const options: scanBarcode.ScanOptions = {
     scanTypes: [scanCore.ScanType.QR_CODE],
     enableMultiMode: false,
@@ -46,7 +54,17 @@ export async function scanPairingCode(context: common.UIAbilityContext): Promise
     if ((error as BusinessError).code === 1000500002) {
       return undefined
     }
-    throw new Error('无法打开系统扫码。请检查相机是否可用，或手动配对。')
+    throw new Error('无法打开系统扫码。请检查相机是否可用。')
   }
-  return parsePairingCode(result.originalValue)
+  return result.originalValue
+}
+
+export async function scanPairingCode(context: common.UIAbilityContext): Promise<PairingCode | undefined> {
+  const value = await scanCode(context)
+  return value === undefined ? undefined : parsePairingCode(value)
+}
+
+export async function scanDownloadCode(context: common.UIAbilityContext): Promise<PairingCode | undefined> {
+  const value = await scanCode(context)
+  return value === undefined ? undefined : parseDownloadCode(value)
 }

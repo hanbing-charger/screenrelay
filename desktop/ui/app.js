@@ -31,6 +31,20 @@ const elements = {
   pickFolder: document.getElementById("pick-folder"),
   cancelFolder: document.getElementById("cancel-folder"),
   saveFolder: document.getElementById("save-folder"),
+  openFileShare: document.getElementById("open-file-share"),
+  closeFileShare: document.getElementById("close-file-share"),
+  fileShareDialog: document.getElementById("file-share-dialog"),
+  fileShareForm: document.getElementById("file-share-form"),
+  fileSharePath: document.getElementById("file-share-path"),
+  fileShareAddress: document.getElementById("file-share-address"),
+  pickFileShare: document.getElementById("pick-file-share"),
+  generateFileShare: document.getElementById("generate-file-share"),
+  fileShareFeedback: document.getElementById("file-share-feedback"),
+  fileShareResult: document.getElementById("file-share-result"),
+  fileShareImage: document.getElementById("file-share-image"),
+  fileShareName: document.getElementById("file-share-name"),
+  fileShareSize: document.getElementById("file-share-size"),
+  fileShareExpiry: document.getElementById("file-share-expiry"),
   fileCount: document.getElementById("file-count"),
   empty: document.getElementById("empty-state"),
   emptyTitle: document.getElementById("empty-title"),
@@ -61,6 +75,10 @@ let folderEditorAction = "";
 let folderPickerRequest;
 let pairingRequest;
 let pairingTimer;
+let fileShareAvailable = false;
+let fileShareRequest;
+let fileShareTimer;
+let fileShareCode;
 
 function setStatus(label, state) {
   if (elements.status.textContent !== label) elements.status.textContent = label;
@@ -171,11 +189,12 @@ function updateAddresses(addresses) {
   previousAddresses = snapshot;
 
   const selected = elements.address.value;
-  for (const picker of [elements.address, elements.pairingAddress]) {
+  for (const picker of [elements.address, elements.pairingAddress, elements.fileShareAddress]) {
+    const preferred = picker === elements.fileShareAddress ? picker.value || selected : selected;
     const options = addresses.map((address) => new Option(address, address));
     if (options.length === 0) options.push(new Option("未发现局域网地址", ""));
     picker.replaceChildren(...options);
-    if (addresses.includes(selected)) picker.value = selected;
+    if (addresses.includes(preferred)) picker.value = preferred;
     picker.disabled = addresses.length === 0;
   }
   elements.copyAddress.disabled = addresses.length === 0;
@@ -228,15 +247,20 @@ function clearPairingCode() {
   elements.pairingExpiry.hidden = true;
 }
 
-function updatePairingCountdown(expiry) {
+function remainingTime(expiry) {
   const seconds = Math.ceil((expiry - Date.now()) / 1000);
-  if (seconds <= 0) {
+  if (seconds <= 0) return "";
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+}
+
+function updatePairingCountdown(expiry) {
+  const remaining = remainingTime(expiry);
+  if (!remaining) {
     clearPairingCode();
     setFeedback(elements.qrFeedback, "二维码已过期，可以重新生成。", true);
     elements.refreshPairing.hidden = false;
     return;
   }
-  const remaining = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
   elements.pairingExpiry.textContent = `剩余有效时间 ${remaining}`;
   elements.pairingExpiry.hidden = false;
 }
@@ -293,6 +317,109 @@ function getFileSize(bytes) {
   for (const unit of units) {
     if (amount < 1024 || unit === "TB") return `${sizeFormat.format(amount)} ${unit}`;
     amount /= 1024;
+  }
+}
+
+function updateFileShareControls() {
+  const busy = Boolean(fileShareRequest);
+  elements.openFileShare.disabled = !fileShareAvailable;
+  elements.fileSharePath.readOnly = busy;
+  elements.fileShareAddress.disabled = busy || !fileShareAvailable;
+  elements.pickFileShare.disabled = busy;
+  elements.generateFileShare.disabled = busy || !fileShareAvailable;
+}
+
+function canRedisplayFileShare() {
+  return fileShareCode && [...elements.fileShareAddress.options].some((option) => option.value === fileShareCode.address);
+}
+
+function renderFileShareCode() {
+  const remaining = fileShareCode ? remainingTime(fileShareCode.expiry) : "";
+  if (fileShareCode && !remaining) {
+    clearInterval(fileShareTimer);
+    fileShareCode = undefined;
+    if (elements.fileShareDialog.open && !elements.fileShareResult.hidden) {
+      setFeedback(elements.fileShareFeedback, "下载码已过期，可以重新生成。", true);
+    }
+  }
+  const canRedisplay = canRedisplayFileShare();
+  const buttonLabel = canRedisplay ? "查看下载码" : "创建下载码";
+  if (elements.openFileShare.textContent !== buttonLabel) elements.openFileShare.textContent = buttonLabel;
+  const visible = Boolean(canRedisplay && elements.fileShareDialog.open &&
+    fileShareCode.path === elements.fileSharePath.value && fileShareCode.address === elements.fileShareAddress.value);
+  elements.fileShareResult.hidden = !visible;
+  const generateLabel = visible ? "重新生成" : "生成下载码";
+  if (elements.generateFileShare.textContent !== generateLabel) elements.generateFileShare.textContent = generateLabel;
+  if (!visible) {
+    elements.fileShareImage.removeAttribute("src");
+    return;
+  }
+  if (elements.fileShareImage.getAttribute("src") !== fileShareCode.image) {
+    elements.fileShareImage.src = fileShareCode.image;
+  }
+  if (elements.fileShareName.textContent !== fileShareCode.name) {
+    elements.fileShareName.textContent = fileShareCode.name;
+  }
+  const size = getFileSize(fileShareCode.size);
+  if (elements.fileShareSize.textContent !== size) elements.fileShareSize.textContent = size;
+  elements.fileShareExpiry.textContent = `剩余有效时间 ${remaining}`;
+}
+
+async function requestFileShare(url, payload) {
+  if (fileShareRequest) return;
+  const controller = new AbortController();
+  fileShareRequest = controller;
+  updateFileShareControls();
+  const picking = !payload;
+  const failure = picking ? "无法打开文件选择器。可以手动输入路径。" : "暂时无法生成下载码，请重试。";
+  setFeedback(elements.fileShareFeedback, picking ? "正在等待系统选择文件…" : "正在生成下载码…");
+  const headers = { "X-ScreenRelay": "1" };
+  if (payload) headers["Content-Type"] = "application/json";
+  const timeout = picking ? undefined : setTimeout(() => controller.abort(), 10000);
+  let focus;
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers,
+      body: payload ? JSON.stringify(payload) : undefined,
+      signal: controller.signal,
+    });
+    const data = response.status === 204 ? null : await response.json().catch(() => null);
+    if (fileShareRequest !== controller || !elements.fileShareDialog.open) return;
+    setFeedback(elements.fileShareFeedback, "");
+    if (picking && response.status === 204) return;
+    if (!response.ok) {
+      setFeedback(elements.fileShareFeedback, data?.error || failure, true);
+      return;
+    }
+    if (picking) {
+      if (typeof data?.path !== "string" || !data.path) throw new Error("selected file");
+      elements.fileSharePath.value = data.path;
+      renderFileShareCode();
+      focus = elements.fileSharePath;
+      return;
+    }
+    const expiry = Date.parse(data?.expiresAt);
+    if (!(expiry > Date.now()) || typeof data?.image !== "string" || !data.image.startsWith("data:image/png;base64,") ||
+        typeof data.name !== "string" || !Number.isFinite(data.size) || data.size < 0) throw new Error("file share response");
+    if (payload.address !== elements.fileShareAddress.value) {
+      setFeedback(elements.fileShareFeedback, "接收地址已变更，请重新生成下载码。", true);
+      return;
+    }
+    fileShareCode = { ...payload, expiry, image: data.image, name: data.name, size: data.size };
+    clearInterval(fileShareTimer);
+    fileShareTimer = setInterval(renderFileShareCode, 1000);
+    renderFileShareCode();
+    focus = elements.fileShareName;
+  } catch {
+    if (fileShareRequest === controller && elements.fileShareDialog.open) setFeedback(elements.fileShareFeedback, failure, true);
+  } finally {
+    clearTimeout(timeout);
+    if (fileShareRequest === controller && elements.fileShareDialog.open) {
+      fileShareRequest = undefined;
+      updateFileShareControls();
+      (focus || (picking ? elements.pickFileShare : elements.generateFileShare)).focus();
+    }
   }
 }
 
@@ -382,6 +509,9 @@ function showStatus(data) {
   const addressChanged = updateAddresses(addresses);
   elements.openPairing.disabled = !data.listening || addresses.length === 0;
   if (addressChanged && elements.pairingDialog.open) requestPairingCode();
+  fileShareAvailable = Boolean(data.listening && addresses.length);
+  updateFileShareControls();
+  renderFileShareCode();
   updateDevices(devices);
 
   if (elements.code.value !== token) elements.code.value = token;
@@ -415,6 +545,8 @@ async function refreshStatus() {
     if (statusRequest !== controller) return;
     setStatus("无法连接接收端", "unavailable");
     elements.openPairing.disabled = true;
+    fileShareAvailable = false;
+    updateFileShareControls();
     if (!statusLoaded) {
       elements.address.replaceChildren(new Option("接收地址不可用", ""));
       elements.code.placeholder = "配对码不可用";
@@ -500,6 +632,40 @@ elements.copyCode.addEventListener("click", async () => {
   }
 });
 elements.toggleCode.addEventListener("click", () => setCodeVisibility(elements.code.type === "password"));
+
+elements.openFileShare.addEventListener("click", () => {
+  if (canRedisplayFileShare() && remainingTime(fileShareCode.expiry)) {
+    elements.fileSharePath.value = fileShareCode.path;
+    elements.fileShareAddress.value = fileShareCode.address;
+  } else {
+    elements.fileShareAddress.value = elements.address.value;
+  }
+  setFeedback(elements.fileShareFeedback, "");
+  elements.fileShareDialog.showModal();
+  renderFileShareCode();
+});
+elements.closeFileShare.addEventListener("click", () => elements.fileShareDialog.close());
+elements.fileShareDialog.addEventListener("close", () => {
+  if (elements.fileShareDialog.open) return;
+  fileShareRequest?.abort();
+  fileShareRequest = undefined;
+  updateFileShareControls();
+  renderFileShareCode();
+});
+elements.fileSharePath.addEventListener("input", renderFileShareCode);
+elements.fileShareAddress.addEventListener("change", renderFileShareCode);
+elements.pickFileShare.addEventListener("click", () => requestFileShare("/api/file-share/pick"));
+elements.fileShareForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  const path = elements.fileSharePath.value;
+  const address = elements.fileShareAddress.value;
+  if (!path.trim()) {
+    setFeedback(elements.fileShareFeedback, "请输入文件的绝对路径。", true);
+    elements.fileSharePath.focus();
+    return;
+  }
+  if (fileShareAvailable && address) requestFileShare("/api/file-share", { address, path });
+});
 
 elements.editFolder.addEventListener("click", () => {
   elements.folderInput.value = folderPath;

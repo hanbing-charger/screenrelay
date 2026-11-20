@@ -5,6 +5,8 @@ import UIKit
 
 @MainActor
 struct PairQRCodeSheet: View {
+    let instruction: String
+    let unavailableMessage: String
     let onRead: (String) -> Void
 
     @Environment(\.presentationMode) private var presentationMode
@@ -20,10 +22,10 @@ struct PairQRCodeSheet: View {
                         .aspectRatio(1, contentMode: .fit)
                         .clipShape(RoundedRectangle(cornerRadius: 16))
                         .accessibility(label: Text("二维码相机取景器"))
-                    Text("将相机对准电脑接收端的配对二维码。")
+                    Text(instruction)
                         .foregroundColor(.secondary)
                 case .denied:
-                    Text("扫码配对需要相机权限。")
+                    Text("扫描二维码需要相机权限。")
                     Button("打开设置") {
                         if let url = URL(string: UIApplication.openSettingsURLString) {
                             UIApplication.shared.open(url)
@@ -35,7 +37,7 @@ struct PairQRCodeSheet: View {
                         Text("正在等待相机授权…")
                     }
                 default:
-                    Text("相机当前不可用。可返回手动填写电脑地址和配对码。")
+                    Text(unavailableMessage)
                         .multilineTextAlignment(.center)
                 }
             }

@@ -173,12 +173,7 @@ func (s *relay) showPairingQR(w http.ResponseWriter, r *http.Request) {
 	}
 
 	code, deadline := s.pairings.invite(time.Now())
-	query := make(url.Values)
-	query.Set("v", "1")
-	query.Set("url", request.Address)
-	query.Set("code", code)
-	payload := url.URL{Scheme: "screenrelay", Host: "pair", RawQuery: query.Encode()}
-	png, err := qrcode.Encode(payload.String(), qrcode.Medium, 320)
+	image, err := transferQRCode("pair", request.Address, code)
 	if err != nil {
 		log.Printf("生成配对二维码失败 %v", err)
 		writeError(w, http.StatusInternalServerError, "无法生成二维码")
@@ -188,9 +183,22 @@ func (s *relay) showPairingQR(w http.ResponseWriter, r *http.Request) {
 		Image     string    `json:"image"`
 		ExpiresAt time.Time `json:"expiresAt"`
 	}{
-		Image:     "data:image/png;base64," + base64.StdEncoding.EncodeToString(png),
+		Image:     image,
 		ExpiresAt: deadline.UTC(),
 	})
+}
+
+func transferQRCode(action, address, code string) (string, error) {
+	query := make(url.Values)
+	query.Set("v", "1")
+	query.Set("url", address)
+	query.Set("code", code)
+	payload := url.URL{Scheme: "screenrelay", Host: action, RawQuery: query.Encode()}
+	png, err := qrcode.Encode(payload.String(), qrcode.Medium, 320)
+	if err != nil {
+		return "", err
+	}
+	return "data:image/png;base64," + base64.StdEncoding.EncodeToString(png), nil
 }
 
 func (s *relay) pairDevice(w http.ResponseWriter, r *http.Request) {

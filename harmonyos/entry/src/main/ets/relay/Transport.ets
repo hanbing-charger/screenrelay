@@ -32,12 +32,16 @@ export function normalizeEndpoint(input: string): string {
   return parsed.protocol + '//' + parsed.host
 }
 
-function createSession(timeout: number): rcp.Session {
+export function createSession(timeout: number, events?: rcp.HttpEventsHandler): rcp.Session {
   const transfer: rcp.TransferConfiguration = {
     autoRedirect: false,
     timeout: { connectMs: 8000, transferMs: timeout }
   }
-  return rcp.createSession({ requestConfiguration: { proxy: 'no-proxy', transfer: transfer } })
+  const configuration: rcp.Configuration = { proxy: 'no-proxy', transfer: transfer }
+  if (events !== undefined) {
+    configuration.tracing = { httpEventsHandler: events }
+  }
+  return rcp.createSession({ requestConfiguration: configuration })
 }
 
 function filenameHeader(name: string): string {

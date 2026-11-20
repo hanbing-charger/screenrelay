@@ -20,7 +20,8 @@ final class MediaSource {
     private static final String[] FIELDS = {
             MediaStore.MediaColumns._ID, MediaStore.MediaColumns.DISPLAY_NAME,
             MediaStore.MediaColumns.RELATIVE_PATH, MediaStore.MediaColumns.MIME_TYPE,
-            MediaStore.MediaColumns.SIZE, MediaStore.MediaColumns.DATE_ADDED
+            MediaStore.MediaColumns.SIZE, MediaStore.MediaColumns.DATE_ADDED,
+            MediaStore.MediaColumns.OWNER_PACKAGE_NAME
     };
 
     private static final Pattern SEPARATORS = Pattern.compile("[\\s_.-]+");
@@ -86,9 +87,13 @@ final class MediaSource {
             database.beginTransactionNonExclusive();
             try {
                 String installationId = settings.installationId();
+                String appPackage = context.getPackageName();
                 while (cursor.moveToNext()) {
                     if (cancelled.getAsBoolean()) {
                         return;
+                    }
+                    if (appPackage.equals(cursor.getString(6))) {
+                        continue;
                     }
                     String name = cursor.getString(1);
                     String kind = classify(video, cursor.getString(2), name);

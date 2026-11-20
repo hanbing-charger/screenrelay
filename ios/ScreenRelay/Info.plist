@@ -22,10 +22,14 @@
     <string>$(CURRENT_PROJECT_VERSION)</string>
     <key>LSRequiresIPhoneOS</key>
     <true/>
+    <key>LSSupportsOpeningDocumentsInPlace</key>
+    <true/>
+    <key>UIFileSharingEnabled</key>
+    <true/>
     <key>NSCameraUsageDescription</key>
-    <string>扫描电脑接收端的二维码，以便在局域网内配对。</string>
+    <string>扫描电脑接收端的二维码，以便在局域网内配对或接收文件。</string>
     <key>NSLocalNetworkUsageDescription</key>
-    <string>连接你配对的局域网电脑，将截屏和录屏上传到接收端。</string>
+    <string>连接局域网内的电脑，上传截屏和录屏，或接收电脑分享的文件。</string>
     <key>NSPhotoLibraryUsageDescription</key>
     <string>查找相册中新保存的截屏和录屏并上传。相机照片和普通视频不会进入同步队列。</string>
     <key>PHPhotoLibraryPreventAutomaticLimitedAccessAlert</key>

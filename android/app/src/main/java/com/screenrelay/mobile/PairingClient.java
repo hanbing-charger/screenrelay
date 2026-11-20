@@ -7,12 +7,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
-import java.net.URI;
-import java.net.URISyntaxException;
-import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
-import java.util.HashMap;
-import java.util.Map;
 
 final class PairingClient {
     private static final String INVALID_QR = "请扫描电脑接收端显示的截屏快传配对二维码。";
@@ -22,39 +17,8 @@ final class PairingClient {
     record Request(String origin, String code) {}
 
     static Request readQr(String contents) {
-        if (contents == null || contents.length() > 2048) {
-            throw new IllegalArgumentException(INVALID_QR);
-        }
-        try {
-            URI uri = new URI(contents.trim());
-            if (!"screenrelay".equalsIgnoreCase(uri.getScheme())
-                    || !"pair".equalsIgnoreCase(uri.getRawAuthority())
-                    || !"".equals(uri.getRawPath()) || uri.getRawFragment() != null
-                    || uri.getRawQuery() == null) {
-                throw new IllegalArgumentException(INVALID_QR);
-            }
-            Map<String, String> fields = new HashMap<>();
-            for (String field : uri.getRawQuery().split("&", -1)) {
-                int separator = field.indexOf('=');
-                if (separator < 1) {
-                    throw new IllegalArgumentException(INVALID_QR);
-                }
-                String key = field.substring(0, separator);
-                String value = URLDecoder.decode(field.substring(separator + 1).replace("+", "%2B"), "UTF-8");
-                if (fields.putIfAbsent(key, value) != null) {
-                    throw new IllegalArgumentException(INVALID_QR);
-                }
-            }
-            String code = fields.get("code");
-            String address = fields.get("url");
-            if (fields.size() != 3 || !"1".equals(fields.get("v")) || address == null
-                    || code == null || !code.matches("[A-Za-z0-9_-]{43}")) {
-                throw new IllegalArgumentException(INVALID_QR);
-            }
-            return new Request(Settings.Configuration.normalizedOrigin(address), code);
-        } catch (URISyntaxException | IOException | IllegalArgumentException invalid) {
-            throw new IllegalArgumentException(INVALID_QR);
-        }
+        ReceiverQr qr = ReceiverQr.read(contents, "pair", INVALID_QR);
+        return new Request(qr.origin(), qr.code());
     }
 
     static Settings.Configuration pair(Request request, String installationId, String deviceName)

@@ -46,9 +46,22 @@ struct PairingLink {
     let code: String
 
     init(scannedValue: String) throws {
+        guard let link = RelayQRLink(scannedValue: scannedValue, host: "pair") else {
+            throw ReceiverIssue.invalidPairingQR
+        }
+        self.baseURL = link.baseURL
+        self.code = link.code
+    }
+}
+
+struct RelayQRLink {
+    let baseURL: URL
+    let code: String
+
+    init?(scannedValue: String, host: String, requiresEncodedOrigin: Bool = false) {
         let base64URLCharacters = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_")
         guard let components = URLComponents(string: scannedValue),
-              components.scheme == "screenrelay", components.host == "pair", components.path.isEmpty,
+              components.scheme == "screenrelay", components.host == host, components.path.isEmpty,
               components.user == nil, components.password == nil, components.port == nil, components.fragment == nil,
               let items = components.queryItems, items.count == 3,
               items.first(where: { $0.name == "v" })?.value == "1",
@@ -56,7 +69,15 @@ struct PairingLink {
               let baseURL = try? ReceiverSettings.validatedBaseURL(address),
               let code = items.first(where: { $0.name == "code" })?.value, code.utf8.count == 43,
               code.unicodeScalars.allSatisfy(base64URLCharacters.contains) else {
-            throw ReceiverIssue.invalidPairingQR
+            return nil
+        }
+        if requiresEncodedOrigin {
+            let allowed = base64URLCharacters.union(CharacterSet(charactersIn: ".~%"))
+            guard let encoded = components.percentEncodedQueryItems?.first(where: { $0.name == "url" })?.value,
+                  encoded.unicodeScalars.allSatisfy(allowed.contains),
+                  encoded.removingPercentEncoding == address, address == address.trimmingCharacters(in: .whitespacesAndNewlines) else {
+                return nil
+            }
         }
         self.baseURL = baseURL
         self.code = code
@@ -95,7 +116,7 @@ enum ReceiverIssue: LocalizedError {
     }
 }
 
-final class RefuseRedirects: NSObject, URLSessionTaskDelegate {
+class RefuseRedirects: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
     func urlSession(
         _ session: URLSession,
         task: URLSessionTask,
@@ -105,6 +126,26 @@ final class RefuseRedirects: NSObject, URLSessionTaskDelegate {
     ) {
         completionHandler(nil)
     }
+}
+
+func directReceiverConfiguration(idleTimeout: TimeInterval) -> URLSessionConfiguration {
+    let configuration = URLSessionConfiguration.ephemeral
+    configuration.allowsCellularAccess = false
+    configuration.httpShouldSetCookies = false
+    configuration.httpCookieStorage = nil
+    configuration.urlCache = nil
+    configuration.urlCredentialStorage = nil
+    // Override the system HTTP proxy for this receiver session.
+    configuration.connectionProxyDictionary = [
+        "HTTPEnable": 0,
+        "HTTPSEnable": 0,
+        "SOCKSEnable": 0,
+        "ProxyAutoConfigEnable": 0,
+        "ProxyAutoDiscoveryEnable": 0,
+    ]
+    configuration.timeoutIntervalForRequest = idleTimeout
+    configuration.timeoutIntervalForResource = 45 * 60
+    return configuration
 }
 
 private final class ReceiverTask: @unchecked Sendable {
@@ -159,22 +200,7 @@ final class Receiver {
     )
 
     init() {
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.allowsCellularAccess = false
-        configuration.httpShouldSetCookies = false
-        configuration.httpCookieStorage = nil
-        configuration.urlCache = nil
-        configuration.urlCredentialStorage = nil
-        // Override the system HTTP proxy for this receiver session.
-        configuration.connectionProxyDictionary = [
-            "HTTPEnable": 0,
-            "HTTPSEnable": 0,
-            "SOCKSEnable": 0,
-            "ProxyAutoConfigEnable": 0,
-            "ProxyAutoDiscoveryEnable": 0,
-        ]
-        configuration.timeoutIntervalForRequest = Self.uploadIdleTimeout
-        configuration.timeoutIntervalForResource = 45 * 60
+        let configuration = directReceiverConfiguration(idleTimeout: Self.uploadIdleTimeout)
         session = URLSession(configuration: configuration, delegate: RefuseRedirects(), delegateQueue: nil)
     }
 

@@ -67,6 +67,14 @@
       </section>
     </div>
 
+    <section class="card file-share" aria-labelledby="file-share-heading">
+      <div>
+        <h2 id="file-share-heading">文件下载码</h2>
+        <p>选择电脑上的文件，手机扫码即可下载。</p>
+      </div>
+      <button type="button" class="primary" id="open-file-share" aria-haspopup="dialog" aria-controls="file-share-dialog" disabled>创建下载码</button>
+    </section>
+
     <section class="card devices" aria-labelledby="devices-heading">
       <div class="activity-header">
         <h2 id="devices-heading">已配对设备</h2>
@@ -90,6 +98,41 @@
     </section>
     <footer class="footer" id="version" hidden></footer>
   </main>
+
+  <dialog class="file-share-dialog" id="file-share-dialog" aria-labelledby="file-share-dialog-heading" aria-describedby="file-share-help">
+    <div class="dialog-heading">
+      <h2 id="file-share-dialog-heading">文件下载码</h2>
+      <button type="button" id="close-file-share">关闭</button>
+    </div>
+    <p class="dialog-copy" id="file-share-help">将手机与电脑连到同一个局域网，用手机端截屏快传扫描下载码。下载码有效期为 30 分钟。</p>
+    <form id="file-share-form">
+      <div class="field">
+        <label for="file-share-path">文件绝对路径</label>
+        <div class="field-controls">
+          <input class="value" type="text" id="file-share-path" dir="auto" autocomplete="off" spellcheck="false" required autofocus>
+          <button type="button" id="pick-file-share">选择文件</button>
+        </div>
+      </div>
+      <div class="field">
+        <label for="file-share-address">扫码下载地址</label>
+        <select class="value" id="file-share-address" required disabled></select>
+      </div>
+      <p class="feedback" id="file-share-feedback" role="status"></p>
+      <div class="dialog-actions">
+        <button type="submit" class="primary" id="generate-file-share">生成下载码</button>
+      </div>
+    </form>
+    <div id="file-share-result" hidden>
+      <div class="qr-display">
+        <img class="qr-image" id="file-share-image" alt="文件下载二维码" width="256" height="256">
+      </div>
+      <div class="qr-details file-share-details">
+        <p class="device-name" id="file-share-name" dir="auto" tabindex="-1"></p>
+        <p class="dialog-copy" id="file-share-size"></p>
+        <p class="qr-expiry" id="file-share-expiry"></p>
+      </div>
+    </div>
+  </dialog>
 
   <dialog class="folder-dialog" id="folder-dialog" aria-labelledby="folder-dialog-heading" aria-describedby="folder-help">
     <h2 id="folder-dialog-heading">修改保存位置</h2>
@@ -121,7 +164,7 @@
       <select class="value" id="pairing-address" disabled></select>
     </div>
     <div class="qr-display">
-      <img class="pairing-image" id="pairing-image" alt="截屏快传配对二维码" width="256" height="256" hidden>
+      <img class="qr-image" id="pairing-image" alt="截屏快传配对二维码" width="256" height="256" hidden>
       <p class="feedback" id="qr-feedback" role="status"></p>
       <button type="button" id="refresh-pairing" hidden>重新生成</button>
     </div>

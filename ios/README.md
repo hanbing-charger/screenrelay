@@ -17,6 +17,14 @@ xcodebuild -project ScreenRelay.xcodeproj -scheme ScreenRelay \
   -sdk iphonesimulator -configuration Debug CODE_SIGNING_ALLOWED=NO build
 ```
 
+## 从电脑接收文件
+
+1. 在同一局域网内，从电脑端选择要分享的文件并生成文件分享二维码。
+2. 在 iPhone 的截屏快传里点 **扫码接收文件**，扫描该二维码。第一次接收时允许相机和局域网访问。
+3. 接收完成后可以在「文件」App 的「我的 iPhone／截屏快传」打开文件。遇到同名文件时，接收的文件名会附加编号。
+
+接收中断后，可在分享有效期间点 **重试接收**，也可重新扫描原二维码。系统仍保留临时数据时，会从已接收的位置继续。
+
 ## iOS 同步行为
 
 - 应用运行时使用 PhotoKit 变更通知自动检查，新素材也会在打开应用时补查。iOS 13 通过 PhotoKit 的录屏类型识别录屏，iOS 14 及以上也会检查录屏智能相簿。

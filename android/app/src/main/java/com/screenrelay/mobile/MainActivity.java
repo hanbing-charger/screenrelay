@@ -15,12 +15,14 @@ import android.os.Handler;
 import android.os.Looper;
 import android.text.InputType;
 import android.text.TextUtils;
+import android.text.format.Formatter;
 import android.view.View;
 import android.view.WindowInsets;
 import android.view.WindowManager;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
+import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
@@ -37,6 +39,8 @@ public final class MainActivity extends Activity {
     private static final int NOTIFICATION_PERMISSION_REQUEST = 2;
     private static final int CAMERA_PERMISSION_REQUEST = 3;
     private static final int QR_SCAN_REQUEST = 4;
+    private static final int DOWNLOAD_CAMERA_PERMISSION_REQUEST = 5;
+    private static final int DOWNLOAD_SCAN_REQUEST = 6;
     private static final int BLUE = Color.rgb(37, 88, 221);
     private static final int INK = Color.rgb(23, 36, 62);
     private static final int SECONDARY = Color.rgb(72, 88, 113);
@@ -45,7 +49,9 @@ public final class MainActivity extends Activity {
     private final Handler main = new Handler(Looper.getMainLooper());
     private final ExecutorService connectionTest = Executors.newSingleThreadExecutor();
     private final Runnable refresh = this::refreshDashboard;
+    private final Runnable refreshDownload = this::refreshDownloadStatus;
     private Settings settings;
+    private IncomingDownloads downloads;
     private Settings.Configuration awaitingPermission;
     private EditText address;
     private EditText secret;
@@ -58,16 +64,26 @@ public final class MainActivity extends Activity {
     private Button pause;
     private Button retry;
     private Button test;
+    private Button scanDownload;
+    private Button resumeDownload;
+    private Button discardDownload;
+    private TextView downloadStatus;
+    private TextView downloadAmount;
+    private ProgressBar downloadProgress;
+    private String downloadFeedback = "";
+    private boolean pairingBusy;
 
     @Override
     public void onCreate(Bundle state) {
         super.onCreate(state);
         settings = new Settings(this);
+        downloads = IncomingDownloads.get(this);
         getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
         setContentView(makeScreen());
         Settings.Configuration saved = settings.configuration();
         address.setText(saved.origin());
         secret.setText(saved.token());
+        downloads.restoreOnce();
     }
 
     @Override
@@ -77,11 +93,13 @@ public final class MainActivity extends Activity {
             ensureRunning();
         }
         refreshDashboard();
+        refreshDownloadStatus();
     }
 
     @Override
     protected void onPause() {
         main.removeCallbacks(refresh);
+        main.removeCallbacks(refreshDownload);
         super.onPause();
     }
 
@@ -130,11 +148,13 @@ public final class MainActivity extends Activity {
         statistics = text("", 14, SECONDARY, false);
         add(dashboard, statistics, 10);
 
+        add(page, makeDownloadCard(), 16);
+
         LinearLayout pairing = card();
         add(page, pairing, 16);
         add(pairing, text("配对电脑", 19, INK, true), 0);
         scan = button("扫码配对", true);
-        scan.setOnClickListener(view -> onScan());
+        scan.setOnClickListener(view -> onScan(false));
         add(pairing, scan, 12);
         feedback = text("", 14, SECONDARY, false);
         feedback.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
@@ -180,37 +200,116 @@ public final class MainActivity extends Activity {
         }
     }
 
-    private void onScan() {
-        if (!getPackageManager().hasSystemFeature(PackageManager.FEATURE_CAMERA_ANY)) {
-            showFeedback("这台手机没有可用的摄像头，请手动配对。");
-            return;
+    private View makeDownloadCard() {
+        LinearLayout download = card();
+        scanDownload = button("扫码接收文件", true);
+        scanDownload.setOnClickListener(view -> onScan(true));
+        add(download, scanDownload, 0);
+        downloadStatus = text("", 14, SECONDARY, false);
+        downloadStatus.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
+        add(download, downloadStatus, 8);
+        downloadProgress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+        downloadProgress.setMax(100);
+        add(download, downloadProgress, 8);
+        downloadAmount = text("", 13, SECONDARY, false);
+        add(download, downloadAmount, 4);
+        resumeDownload = button("继续接收", false);
+        resumeDownload.setOnClickListener(view -> {
+            downloadFeedback = "";
+            downloads.resume();
+            refreshDownloadStatus();
+        });
+        add(download, resumeDownload, 8);
+        discardDownload = button("放弃本次接收", false);
+        discardDownload.setOnClickListener(view -> {
+            downloadFeedback = "";
+            downloads.discard();
+            refreshDownloadStatus();
+        });
+        add(download, discardDownload, 6);
+        return download;
+    }
+
+    private void refreshDownloadStatus() {
+        main.removeCallbacks(refreshDownload);
+        IncomingDownloads.State download = downloads.state();
+        String message = downloadFeedback.isEmpty() ? download.message() : downloadFeedback;
+        if (!TextUtils.equals(message, downloadStatus.getText())) {
+            downloadStatus.setText(message);
         }
-        if (Settings.granted(this, Manifest.permission.CAMERA)) {
-            openScanner();
-        } else {
-            requestPermissions(new String[]{Manifest.permission.CAMERA}, CAMERA_PERMISSION_REQUEST);
+        downloadStatus.setVisibility(message.isEmpty() ? View.GONE : View.VISIBLE);
+        boolean showAmount = download.total() >= 0 && (download.running() || download.resumable());
+        downloadProgress.setVisibility(showAmount ? View.VISIBLE : View.GONE);
+        downloadAmount.setVisibility(showAmount ? View.VISIBLE : View.GONE);
+        if (showAmount) {
+            downloadProgress.setProgress(download.total() == 0 ? 100
+                    : (int) (100.0 * download.received() / download.total()));
+            downloadAmount.setText(Formatter.formatShortFileSize(this, download.received()) + " / "
+                    + Formatter.formatShortFileSize(this, download.total()));
+        }
+        resumeDownload.setVisibility(download.resumable() ? View.VISIBLE : View.GONE);
+        discardDownload.setVisibility(download.resumable() ? View.VISIBLE : View.GONE);
+        scanDownload.setEnabled(!pairingBusy && !download.running() && !download.resumable());
+        if (download.running()) {
+            main.postDelayed(refreshDownload, 250);
         }
     }
 
-    private void openScanner() {
+    private void onScan(boolean download) {
+        if (!getPackageManager().hasSystemFeature(PackageManager.FEATURE_CAMERA_ANY)) {
+            showScannerFeedback(download, "这台手机没有可用的摄像头。");
+            return;
+        }
+        if (Settings.granted(this, Manifest.permission.CAMERA)) {
+            openScanner(download);
+        } else {
+            requestPermissions(new String[]{Manifest.permission.CAMERA},
+                    download ? DOWNLOAD_CAMERA_PERMISSION_REQUEST : CAMERA_PERMISSION_REQUEST);
+        }
+    }
+
+    private void showScannerFeedback(boolean download, String message) {
+        if (download) {
+            downloadFeedback = message;
+            refreshDownloadStatus();
+        } else {
+            showFeedback(message + "也可以手动输入电脑地址和配对密钥。");
+        }
+    }
+
+    private void openScanner(boolean download) {
         ScanOptions options = new ScanOptions()
                 .setCaptureActivity(PairingScannerActivity.class)
                 .setDesiredBarcodeFormats(ScanOptions.QR_CODE)
                 .setOrientationLocked(false)
                 .setBeepEnabled(false)
-                .setPrompt("请扫描你电脑接收端显示的配对二维码");
-        startActivityForResult(options.createScanIntent(this), QR_SCAN_REQUEST);
+                .setPrompt(download ? "请扫描电脑上显示的文件下载二维码"
+                        : "请扫描你电脑接收端显示的配对二维码");
+        startActivityForResult(options.createScanIntent(this), download ? DOWNLOAD_SCAN_REQUEST : QR_SCAN_REQUEST);
     }
 
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
-        if (requestCode != QR_SCAN_REQUEST || resultCode != RESULT_OK || data == null) {
+        if ((requestCode != QR_SCAN_REQUEST && requestCode != DOWNLOAD_SCAN_REQUEST)
+                || resultCode != RESULT_OK || data == null) {
+            return;
+        }
+        String contents = ScanIntentResult.parseActivityResult(resultCode, data).getContents();
+        if (requestCode == DOWNLOAD_SCAN_REQUEST) {
+            try {
+                ReceiverQr qr = ReceiverQr.read(contents, "download", "请扫描电脑显示的文件下载二维码。");
+                downloadFeedback = "";
+                downloads.start(new DownloadClient.Request(qr.origin(), qr.code()));
+                refreshDownloadStatus();
+            } catch (IllegalArgumentException invalid) {
+                showScannerFeedback(true, invalid.getMessage());
+            }
             return;
         }
         PairingClient.Request request;
         try {
-            request = PairingClient.readQr(ScanIntentResult.parseActivityResult(resultCode, data).getContents());
+            request = PairingClient.readQr(contents);
         } catch (IllegalArgumentException invalid) {
             showFeedback(invalid.getMessage());
             return;
@@ -243,9 +342,11 @@ public final class MainActivity extends Activity {
     }
 
     private void setPairingBusy(boolean busy) {
+        pairingBusy = busy;
         for (View control : new View[]{scan, activate, test, pause, retry, address, secret}) {
             control.setEnabled(!busy);
         }
+        refreshDownloadStatus();
     }
 
     private void finishPairing(Settings.Configuration configuration, String error) {
@@ -356,11 +457,12 @@ public final class MainActivity extends Activity {
     @Override
     public void onRequestPermissionsResult(int code, String[] permissions, int[] results) {
         super.onRequestPermissionsResult(code, permissions, results);
-        if (code == CAMERA_PERMISSION_REQUEST) {
+        if (code == CAMERA_PERMISSION_REQUEST || code == DOWNLOAD_CAMERA_PERMISSION_REQUEST) {
+            boolean download = code == DOWNLOAD_CAMERA_PERMISSION_REQUEST;
             if (Settings.granted(this, Manifest.permission.CAMERA)) {
-                openScanner();
+                openScanner(download);
             } else {
-                showFeedback("请在系统设置中允许使用摄像头，或手动输入电脑地址和配对密钥。");
+                showScannerFeedback(download, "请在系统设置中允许使用摄像头。");
             }
         } else if (code == MEDIA_PERMISSION_REQUEST) {
             Settings.Configuration requested = awaitingPermission;

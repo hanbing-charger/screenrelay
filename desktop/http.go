@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
@@ -48,9 +49,10 @@ func (s *uploadStream) Read(p []byte) (int, error) {
 
 type relay struct {
 	locations     *receiveLocations
-	pickingFolder atomic.Bool
+	pickingPath   atomic.Bool
 	token         string
 	pairings      *pairingRegistry
+	shares        fileShares
 	maxBytes      int64
 	uploads       chan struct{}
 	scheme        string
@@ -67,6 +69,7 @@ func (s *relay) phoneAPI() http.Handler {
 	})
 	mux.HandleFunc("POST /api/v1/uploads", s.upload)
 	mux.HandleFunc("POST /api/v1/pair", s.pairDevice)
+	mux.HandleFunc("GET /api/v1/download", s.downloadSharedFile)
 	return mux
 }
 
@@ -206,7 +209,11 @@ func (s *relay) dashboardAPI() http.Handler {
 	mux.HandleFunc("GET /api/status", s.status)
 	mux.HandleFunc("POST /api/pairing", s.showPairingQR)
 	mux.HandleFunc("POST /api/folder", s.changeReceiveFolder)
-	mux.HandleFunc("POST /api/folder/pick", s.pickReceiveFolder)
+	mux.HandleFunc("POST /api/folder/pick", s.pathPicker(func(ctx context.Context) (string, error) {
+		return pickReceiveFolder(ctx, s.locations.current().root)
+	}))
+	mux.HandleFunc("POST /api/file-share", s.createFileShare)
+	mux.HandleFunc("POST /api/file-share/pick", s.pathPicker(pickShareFile))
 	mux.HandleFunc("GET /files/{id}", s.serveCapture)
 	mux.HandleFunc("POST /api/open-folder", func(w http.ResponseWriter, r *http.Request) {
 		if !s.dashboardActionAllowed(r) {
@@ -261,29 +268,31 @@ func (s *relay) changeReceiveFolder(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"folder": folder})
 }
 
-func (s *relay) pickReceiveFolder(w http.ResponseWriter, r *http.Request) {
-	if !s.dashboardActionAllowed(r) {
-		writeError(w, http.StatusForbidden, "dashboard origin required")
-		return
+func (s *relay) pathPicker(pick func(context.Context) (string, error)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !s.dashboardActionAllowed(r) {
+			writeError(w, http.StatusForbidden, "dashboard origin required")
+			return
+		}
+		if !s.pickingPath.CompareAndSwap(false, true) {
+			writeError(w, http.StatusConflict, "系统选择窗口已打开。")
+			return
+		}
+		defer s.pickingPath.Store(false)
+		path, err := pick(r.Context())
+		if r.Context().Err() != nil {
+			return
+		}
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if path == "" {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"path": path})
 	}
-	if !s.pickingFolder.CompareAndSwap(false, true) {
-		writeError(w, http.StatusConflict, "文件夹选择窗口已打开。")
-		return
-	}
-	defer s.pickingFolder.Store(false)
-	path, err := pickReceiveFolder(r.Context(), s.locations.current().root)
-	if r.Context().Err() != nil {
-		return
-	}
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	if path == "" {
-		w.WriteHeader(http.StatusNoContent)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]string{"path": path})
 }
 
 func (s *relay) status(w http.ResponseWriter, r *http.Request) {

@@ -12,6 +12,7 @@
         660000000000000000000004 /* Receiver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 660000000000000000000014 /* Receiver.swift */; };
         660000000000000000000005 /* PairQRCodeSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 660000000000000000000017 /* PairQRCodeSheet.swift */; };
         660000000000000000000006 /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 660000000000000000000018 /* LaunchScreen.storyboard */; };
+        660000000000000000000007 /* FileReceive.swift in Sources */ = {isa = PBXBuildFile; fileRef = 660000000000000000000019 /* FileReceive.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -23,6 +24,7 @@
         660000000000000000000016 /* ScreenRelay.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ScreenRelay.app; sourceTree = BUILT_PRODUCTS_DIR; };
         660000000000000000000017 /* PairQRCodeSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairQRCodeSheet.swift; sourceTree = "<group>"; };
         660000000000000000000018 /* LaunchScreen.storyboard */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; path = LaunchScreen.storyboard; sourceTree = "<group>"; };
+        660000000000000000000019 /* FileReceive.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileReceive.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -52,6 +54,7 @@
                 660000000000000000000014 /* Receiver.swift */,
                 660000000000000000000017 /* PairQRCodeSheet.swift */,
                 660000000000000000000018 /* LaunchScreen.storyboard */,
+                660000000000000000000019 /* FileReceive.swift */,
                 660000000000000000000015 /* Info.plist */,
             );
             path = ScreenRelay;
@@ -131,6 +134,7 @@
                 660000000000000000000003 /* CaptureLibrary.swift in Sources */,
                 660000000000000000000004 /* Receiver.swift in Sources */,
                 660000000000000000000005 /* PairQRCodeSheet.swift in Sources */,
+                660000000000000000000007 /* FileReceive.swift in Sources */,
             );
             runOnlyForDeploymentPostprocessing = 0;
         };

@@ -36,11 +36,12 @@ final class ScreenRelayDelegate: UIResponder, UIApplicationDelegate {
 @MainActor
 final class ScreenRelaySceneDelegate: UIResponder, UIWindowSceneDelegate {
     var window: UIWindow?
+    private let downloads = FileReceiveModel()
 
     func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options: UIScene.ConnectionOptions) {
         guard let windowScene = scene as? UIWindowScene else { return }
         let window = UIWindow(windowScene: windowScene)
-        window.rootViewController = UIHostingController(rootView: PairingView(model: SyncModel.shared))
+        window.rootViewController = UIHostingController(rootView: PairingView(model: SyncModel.shared, downloads: downloads))
         self.window = window
         window.makeKeyAndVisible()
     }
@@ -64,14 +65,34 @@ struct ActivityIndicator: UIViewRepresentable {
     func updateUIView(_ indicator: UIActivityIndicatorView, context: Context) {}
 }
 
+private struct FileReceiveProgress: UIViewRepresentable {
+    let value: Float
+
+    func makeUIView(context: Context) -> UIProgressView {
+        UIProgressView(progressViewStyle: .default)
+    }
+
+    func updateUIView(_ view: UIProgressView, context: Context) {
+        view.progress = value
+    }
+}
+
 @MainActor
 private struct PairingView: View {
+    private enum ScanPurpose: String, Identifiable {
+        case pairing
+        case download
+
+        var id: String { rawValue }
+    }
+
     @ObservedObject var model: SyncModel
+    @ObservedObject var downloads: FileReceiveModel
     @State private var address = ""
     @State private var token = ""
     @State private var testResult: String?
     @State private var testing = false
-    @State private var showingScanner = false
+    @State private var scanner: ScanPurpose?
     @State private var pairing = false
     @State private var pairingResult: String?
     private let timer = Timer.publish(every: 20, on: .main, in: .common).autoconnect()
@@ -80,6 +101,7 @@ private struct PairingView: View {
         NavigationView {
             Form {
                 pairingSection
+                receiveSection
                 syncSection
                 progressSection
                 if !model.failureMessages.isEmpty {
@@ -93,8 +115,22 @@ private struct PairingView: View {
                 }
             }
             .navigationBarTitle("截屏快传")
-            .sheet(isPresented: $showingScanner) {
-                PairQRCodeSheet(onRead: pairWithQRCode)
+            .sheet(item: $scanner) { purpose in
+                PairQRCodeSheet(
+                    instruction: purpose == .pairing
+                        ? "将相机对准电脑接收端的配对二维码。"
+                        : "将相机对准电脑接收端的文件分享二维码。",
+                    unavailableMessage: purpose == .pairing
+                        ? "相机当前不可用。可返回手动填写电脑地址和配对码。"
+                        : "相机当前不可用，请检查相机后重试。"
+                ) { value in
+                    guard scanner == purpose else { return }
+                    scanner = nil
+                    switch purpose {
+                    case .pairing: pairWithQRCode(value)
+                    case .download: downloads.receive(scannedValue: value)
+                    }
+                }
             }
             .onAppear {
                 guard let settings = model.settings else { return }
@@ -113,7 +149,7 @@ private struct PairingView: View {
         ) {
             Button {
                 pairingResult = nil
-                showingScanner = true
+                scanner = .pairing
             } label: {
                 HStack {
                     Image(systemName: "qrcode")
@@ -168,6 +204,49 @@ private struct PairingView: View {
             }
         }
         .disabled(pairing)
+    }
+
+    private var receiveSection: some View {
+        Section(
+            header: Text("从电脑接收"),
+            footer: Text("收到的文件保存在「文件」App 的「我的 iPhone／截屏快传」。")
+        ) {
+            Button {
+                scanner = .download
+            } label: {
+                HStack {
+                    Image(systemName: "qrcode")
+                    Text("扫码接收文件")
+                }
+            }
+            .disabled(downloads.isReceiving)
+
+            switch downloads.status {
+            case .idle:
+                EmptyView()
+            case .preparing:
+                HStack {
+                    ActivityIndicator().frame(width: 24, height: 24)
+                    Text("正在读取文件信息…").foregroundColor(.secondary)
+                }
+            case .receiving(let name, let bytes, let total):
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("正在接收 \(name)")
+                    if total > 0 {
+                        FileReceiveProgress(value: Float(bytes) / Float(total)).frame(height: 4)
+                        Text("\(ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)) / \(ByteCountFormatter.string(fromByteCount: total, countStyle: .file))")
+                            .foregroundColor(.secondary)
+                    }
+                }
+            case .finished(let name):
+                Text("已接收 \(name)").foregroundColor(.secondary)
+            case .failed(let message):
+                Text(message).foregroundColor(.secondary)
+            }
+            if downloads.canRetry {
+                Button("重试接收", action: downloads.retry)
+            }
+        }
     }
 
     private var syncSection: some View {
@@ -237,8 +316,7 @@ private struct PairingView: View {
     }
 
     private func pairWithQRCode(_ scannedValue: String) {
-        guard showingScanner, !pairing else { return }
-        showingScanner = false
+        guard !pairing else { return }
         pairing = true
         Task {
             defer { pairing = false }

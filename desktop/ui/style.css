@@ -128,7 +128,9 @@ select.value:disabled, input.value::placeholder { color: #5a6b64; opacity: 1; }
 .primary:enabled:hover { border-color: transparent; background: var(--accent-hover); }
 .primary:disabled { color: #51635f; background: #dbe7df; }
 
-.devices, .activity { margin-top: 16px; }
+.devices, .activity, .file-share { margin-top: 16px; }
+.file-share { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 12px; padding: 18px clamp(18px, 3vw, 25px); }
+.file-share p { margin: 6px 0 0; color: var(--muted); font-size: .86rem; line-height: 1.55; }
 .activity-header { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 19px clamp(18px, 3vw, 25px); border-bottom: 1px solid var(--line); }
 .file-count { color: var(--muted); font-size: .84rem; }
 .devices-empty { margin: 0; padding: 14px clamp(18px, 3vw, 25px); color: var(--muted); font-size: .86rem; }
@@ -161,19 +163,22 @@ select.value:disabled, input.value::placeholder { color: #5a6b64; opacity: 1; }
 .file-actions a:last-child { border-color: var(--line); }
 .footer { margin-block: 16px 28px; text-align: right; color: var(--muted); font-size: .76rem; }
 
-.pairing-dialog, .folder-dialog { width: min(430px, calc(100% - 28px)); max-height: calc(100% - 28px); padding: clamp(16px, 4vw, 22px); border: 1px solid var(--line); border-radius: var(--round); color: inherit; background: #fff; box-shadow: 0 18px 60px #102b2150; }
-.folder-dialog { width: min(560px, calc(100% - 28px)); }
-.pairing-dialog::backdrop, .folder-dialog::backdrop { background: #192a2970; }
+.pairing-dialog, .folder-dialog, .file-share-dialog { width: min(430px, calc(100% - 28px)); max-height: calc(100% - 28px); padding: clamp(16px, 4vw, 22px); border: 1px solid var(--line); border-radius: var(--round); color: inherit; background: #fff; box-shadow: 0 18px 60px #102b2150; }
+.folder-dialog, .file-share-dialog { width: min(560px, calc(100% - 28px)); }
+.pairing-dialog::backdrop, .folder-dialog::backdrop, .file-share-dialog::backdrop { background: #192a2970; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
 .dialog-actions > button { min-width: 72px; }
 .dialog-heading > button { min-height: 34px; }
 .dialog-copy { margin: 12px 0 0; color: var(--muted); font-size: .88rem; line-height: 1.6; }
 .qr-display { display: grid; place-content: center; justify-items: center; gap: 10px; min-height: 130px; margin-top: 14px; padding: 10px; border: 1px solid var(--line); border-radius: 12px; text-align: center; background: #f6f9f7; }
-.pairing-image { display: block; max-width: 100%; height: auto; image-rendering: pixelated; }
+.qr-image { display: block; max-width: 100%; height: auto; image-rendering: pixelated; }
 .qr-display .feedback { margin: 0; }
 .qr-details { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; margin-top: 12px; }
 .qr-expiry, .dialog-devices { margin: 0; color: var(--muted); font-size: .82rem; }
 .qr-expiry { font-variant-numeric: tabular-nums; }
+.file-share-details { align-items: baseline; }
+.file-share-details .device-name { flex-basis: 100%; }
+.file-share-details .dialog-copy { margin: 0; }
 
 @media (max-width: 670px) {
   .topbar-content { min-height: 64px; }
