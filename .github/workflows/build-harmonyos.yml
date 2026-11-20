@@ -1,6 +1,11 @@
 name: Build HarmonyOS HAP
 'on':
   workflow_dispatch:
+    inputs:
+      sign_hap:
+        description: "Sign the HAP with Huawei debug signing materials"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -14,6 +19,19 @@ jobs:
       - uses: actions/checkout@v5
         with:
           persist-credentials: false
+
+      - name: Check signing secrets
+        if: inputs.sign_hap
+        shell: bash
+        env:
+          HARMONY_REPO_PRIVATE: ${{ github.event.repository.private == true }}
+          HARMONY_KEYSTORE_BASE64: ${{ secrets.HARMONY_KEYSTORE_BASE64 }}
+          HARMONY_CERTIFICATE_BASE64: ${{ secrets.HARMONY_CERTIFICATE_BASE64 }}
+          HARMONY_PROFILE_BASE64: ${{ secrets.HARMONY_PROFILE_BASE64 }}
+          HARMONY_KEY_ALIAS: ${{ secrets.HARMONY_KEY_ALIAS }}
+          HARMONY_KEYSTORE_PASSWORD: ${{ secrets.HARMONY_KEYSTORE_PASSWORD }}
+          HARMONY_ARTIFACT_PASSWORD: ${{ secrets.HARMONY_ARTIFACT_PASSWORD }}
+        run: bash .github/scripts/sign-harmonyos-hap.sh --check
 
       - uses: actions/setup-java@v5
         with:
@@ -78,10 +96,12 @@ jobs:
             | sha256sum --check --status
           unzip -q "$archive" -d "$tool_dir"
           rm -f -- "$archive"
-          tool_bin="$tool_dir/command-line-tools/bin"
+          tools="$tool_dir/command-line-tools"
+          tool_bin="$tools/bin"
           test -x "$tool_bin/hvigorw"
           test -x "$tool_bin/ohpm"
           printf '%s\n' "$tool_bin" >> "$GITHUB_PATH"
+          printf 'DEVECO_SIGN_TOOL=%s\n' "$tools/sdk/default/openharmony/toolchains/lib/hap-sign-tool.jar" >> "$GITHUB_ENV"
 
       - name: Build the entry HAP
         working-directory: harmonyos
@@ -93,9 +113,34 @@ jobs:
           hvigorw --mode module -p product=default -p module=entry@default \
             -p buildMode=debug assembleHap --no-daemon
 
-      - name: Upload the HAP
+      - name: Sign and verify the HAP
+        if: inputs.sign_hap
+        id: sign
+        shell: bash
+        env:
+          HARMONY_REPO_PRIVATE: ${{ github.event.repository.private == true }}
+          HARMONY_KEYSTORE_BASE64: ${{ secrets.HARMONY_KEYSTORE_BASE64 }}
+          HARMONY_CERTIFICATE_BASE64: ${{ secrets.HARMONY_CERTIFICATE_BASE64 }}
+          HARMONY_PROFILE_BASE64: ${{ secrets.HARMONY_PROFILE_BASE64 }}
+          HARMONY_KEY_ALIAS: ${{ secrets.HARMONY_KEY_ALIAS }}
+          HARMONY_KEYSTORE_PASSWORD: ${{ secrets.HARMONY_KEYSTORE_PASSWORD }}
+          HARMONY_KEY_PASSWORD: ${{ secrets.HARMONY_KEY_PASSWORD }}
+          HARMONY_ARTIFACT_PASSWORD: ${{ secrets.HARMONY_ARTIFACT_PASSWORD }}
+        run: bash .github/scripts/sign-harmonyos-hap.sh harmonyos/entry/build/default/outputs/default/entry-default-unsigned.hap
+
+      - name: Upload the unsigned HAP
+        if: ${{ !inputs.sign_hap }}
         uses: actions/upload-artifact@v6
         with:
           name: screenrelay-harmonyos-hap
           path: harmonyos/entry/build/default/outputs/default/*.hap
+          if-no-files-found: error
+
+
+      - name: Upload the signed package
+        if: inputs.sign_hap
+        uses: actions/upload-artifact@v6
+        with:
+          name: screenrelay-harmonyos-signed
+          path: ${{ steps.sign.outputs.artifact_path }}
           if-no-files-found: error

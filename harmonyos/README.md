@@ -10,6 +10,28 @@
 
 应用直接从手机发送到配对地址。使用 HTTP 时，传输内容和令牌会以明文经过局域网。局域网内的 HTTPS 地址可在电脑接收端具备受手机信任的 HTTPS 入口时使用。
 
+## GitHub Actions 调试签名
+
+在 DevEco Studio 或华为开发者平台准备同一套调试签名材料。先注册真机的 UDID，再用本地密钥库生成 CSR 并申请调试证书。创建调试 Profile 时，选择同一个证书和要安装的设备，应用的包名为 `com.screenrelay.sender`。保留创建密钥库时设置的密码与别名。
+
+[注册设备](https://developer.huawei.com/consumer/cn/doc/App/agc-help-add-device-0000002283189937/) · [申请调试证书](https://developer.huawei.com/consumer/cn/doc/app/agc-help-add-debugcert-0000001914263178/) · [申请调试 Profile](https://developer.huawei.com/consumer/cn/doc/App/agc-help-debug-profile-0000002248181278/)
+
+在仓库的 **Settings → Secrets and variables → Actions** 添加以下 Repository secrets。
+
+| Secret | 值 |
+| --- | --- |
+| `HARMONY_KEYSTORE_BASE64` | `.p12` 的 Base64 内容 |
+| `HARMONY_CERTIFICATE_BASE64` | 调试证书 `.cer` 的 Base64 内容 |
+| `HARMONY_PROFILE_BASE64` | 调试描述文件 `.p7b` 的 Base64 内容 |
+| `HARMONY_KEY_ALIAS` | 密钥别名 |
+| `HARMONY_KEYSTORE_PASSWORD` | 密钥库密码 |
+| `HARMONY_KEY_PASSWORD` | 私钥密码。与密钥库密码相同时可留空 |
+| `HARMONY_ARTIFACT_PASSWORD` | 公开仓库的下载包密码。请使用单独生成的随机密码 |
+
+在本机把每个签名文件编码为 Base64，再粘贴到相应 Secret。macOS 可用 `base64 < signing.p12 | tr -d '\r\n' | pbcopy` 复制到剪贴板。Windows PowerShell 可用 `Set-Clipboard -Value ([Convert]::ToBase64String([IO.File]::ReadAllBytes((Resolve-Path '.\signing.p12').Path)))`。将命令里的文件名换成实际文件名。
+
+打开 **Actions → Build HarmonyOS HAP → Run workflow**，选择 `main` 并勾选 `sign_hap`。构建通过后，在 **Artifacts** 下载 `screenrelay-harmonyos-signed`。公开仓库的产物内含一个加密的 `.7z`，用 `HARMONY_ARTIFACT_PASSWORD` 解压后取得签名 HAP。这样调试 Profile 中的设备标识受到保护。私有仓库的产物可直接解压得到 HAP。关闭 `sign_hap` 时仍可构建未签名版本。
+
 ## 获批安装包的自动发现
 
 普通签名包默认可通过系统相册手动选取文件。华为将图库全量读取权限 `ohos.permission.READ_IMAGEVIDEO` 列为受限权限，设备间图片和视频同步属于可申请的用途。配置了包含该权限的华为签名 Profile 后，在 `entry/src/main/module.json5` 的 `requestPermissions` 数组中加入：
