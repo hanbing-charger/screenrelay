@@ -10,6 +10,9 @@ final class ScreenRelayDelegate: UIResponder, UIApplicationDelegate {
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
+        if #available(iOS 14.0, *) {
+            DiagnosticsCollector.shared.start()
+        }
         BGTaskScheduler.shared.register(forTaskWithIdentifier: SyncModel.processingID, using: .main) { task in
             guard let processing = task as? BGProcessingTask else {
                 task.setTaskCompleted(success: false)
@@ -104,6 +107,9 @@ private struct PairingView: View {
                 receiveSection
                 syncSection
                 progressSection
+                NavigationLink(destination: DiagnosticsView(model: model)) {
+                    Text("诊断日志")
+                }
                 if !model.failureMessages.isEmpty {
                     Section(header: Text("失败记录")) {
                         ForEach(Array(model.failureMessages.enumerated()), id: \.offset) { entry in

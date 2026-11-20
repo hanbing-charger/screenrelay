@@ -135,6 +135,11 @@ final class SyncModel: ObservableObject {
         }
     }
 
+    func sendDiagnostic(_ record: DiagnosticRecord, to settings: ReceiverSettings) async throws -> Int {
+        guard self.settings == settings else { throw DiagnosticUploadIssue.settingsChanged }
+        return try await receiver.uploadDiagnostic(record, settings: settings, installationID: state.installationID)
+    }
+
     func setEnabled(_ enabled: Bool) {
         load()
         guard loaded, state.settings != nil else { return }

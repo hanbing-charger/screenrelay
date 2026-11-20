@@ -13,6 +13,8 @@
         660000000000000000000005 /* PairQRCodeSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 660000000000000000000017 /* PairQRCodeSheet.swift */; };
         660000000000000000000006 /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 660000000000000000000018 /* LaunchScreen.storyboard */; };
         660000000000000000000007 /* FileReceive.swift in Sources */ = {isa = PBXBuildFile; fileRef = 660000000000000000000019 /* FileReceive.swift */; };
+        660000000000000000000008 /* Diagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 66000000000000000000001A /* Diagnostics.swift */; };
+        660000000000000000000009 /* DiagnosticsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 66000000000000000000001B /* DiagnosticsView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -25,6 +27,8 @@
         660000000000000000000017 /* PairQRCodeSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairQRCodeSheet.swift; sourceTree = "<group>"; };
         660000000000000000000018 /* LaunchScreen.storyboard */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; path = LaunchScreen.storyboard; sourceTree = "<group>"; };
         660000000000000000000019 /* FileReceive.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileReceive.swift; sourceTree = "<group>"; };
+        66000000000000000000001A /* Diagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Diagnostics.swift; sourceTree = "<group>"; };
+        66000000000000000000001B /* DiagnosticsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticsView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -55,6 +59,8 @@
                 660000000000000000000017 /* PairQRCodeSheet.swift */,
                 660000000000000000000018 /* LaunchScreen.storyboard */,
                 660000000000000000000019 /* FileReceive.swift */,
+                66000000000000000000001A /* Diagnostics.swift */,
+                66000000000000000000001B /* DiagnosticsView.swift */,
                 660000000000000000000015 /* Info.plist */,
             );
             path = ScreenRelay;
@@ -135,6 +141,8 @@
                 660000000000000000000004 /* Receiver.swift in Sources */,
                 660000000000000000000005 /* PairQRCodeSheet.swift in Sources */,
                 660000000000000000000007 /* FileReceive.swift in Sources */,
+                660000000000000000000008 /* Diagnostics.swift in Sources */,
+                660000000000000000000009 /* DiagnosticsView.swift in Sources */,
             );
             runOnlyForDeploymentPostprocessing = 0;
         };

@@ -93,6 +93,7 @@ enum ReceiverIssue: LocalizedError {
     case expiredPairingCode
     case unavailableStorage
     case emptyFile
+    case invalidDiagnosticSize
 
     var errorDescription: String? {
         switch self {
@@ -112,6 +113,8 @@ enum ReceiverIssue: LocalizedError {
             return "无法打开本机同步记录。"
         case .emptyFile:
             return "相册导出的文件为空。"
+        case .invalidDiagnosticSize:
+            return "诊断日志为空或超过 1 MiB。"
         }
     }
 }
@@ -265,20 +268,35 @@ final class Receiver {
     }
 
     func upload(_ capture: Capture, file: URL, settings: ReceiverSettings, installationID: String) async throws -> Int {
-        let size = try file.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
-        guard size > 0 else { throw ReceiverIssue.emptyFile }
         let identifier = SHA256.hash(data: Data("\(installationID):\(capture.localIdentifier)".utf8))
             .map { String(format: "%02x", $0) }.joined()
+        return try await uploadFile(file, filename: capture.filename, kind: capture.kind.rawValue,
+                                    contentType: capture.mimeType, identifier: identifier, settings: settings)
+    }
 
+    func uploadDiagnostic(_ record: DiagnosticRecord, settings: ReceiverSettings, installationID: String) async throws -> Int {
+        let identifier = DiagnosticsStore.digest(Data("\(installationID):diagnostic:\(record.id)".utf8))
+        return try await uploadFile(record.file, filename: record.file.lastPathComponent, kind: "diagnostic",
+                                    contentType: "text/plain; charset=utf-8", identifier: identifier, settings: settings,
+                                    sizeLimit: DiagnosticRecord.maxBytes)
+    }
+
+    private func uploadFile(
+        _ file: URL, filename: String, kind: String, contentType: String, identifier: String,
+        settings: ReceiverSettings, sizeLimit: Int? = nil
+    ) async throws -> Int {
+        let size = try file.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+        if let sizeLimit, size <= 0 || size > sizeLimit { throw ReceiverIssue.invalidDiagnosticSize }
+        guard size > 0 else { throw ReceiverIssue.emptyFile }
         var request = URLRequest(url: settings.endpoint("uploads"))
         request.httpMethod = "POST"
         request.timeoutInterval = Self.uploadIdleTimeout
         request.setValue("Bearer \(settings.token)", forHTTPHeaderField: "Authorization")
-        request.setValue(capture.filename.addingPercentEncoding(withAllowedCharacters: unreserved),
+        request.setValue(filename.addingPercentEncoding(withAllowedCharacters: unreserved),
                          forHTTPHeaderField: "X-Filename")
-        request.setValue(capture.kind.rawValue, forHTTPHeaderField: "X-Media-Kind")
+        request.setValue(kind, forHTTPHeaderField: "X-Media-Kind")
         request.setValue(identifier, forHTTPHeaderField: "X-Upload-Id")
-        request.setValue(capture.mimeType, forHTTPHeaderField: "Content-Type")
+        request.setValue(contentType, forHTTPHeaderField: "Content-Type")
         request.setValue(String(size), forHTTPHeaderField: "Content-Length")
 
         let (data, response) = try await send(request, uploading: file)
