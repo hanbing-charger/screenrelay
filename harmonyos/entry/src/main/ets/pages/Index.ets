@@ -204,6 +204,11 @@ struct Index {
           Text('与同一局域网内的电脑传输文件。')
             .fontSize(15)
             .fontColor(SUBTLE)
+          Button('诊断日志')
+            .backgroundColor(Color.White)
+            .fontColor(ACCENT)
+            .enabled(!this.busy)
+            .onClick((): void => { this.getUIContext().getRouter().pushUrl({ url: 'pages/DiagnosticsPage' }) })
         }
         .alignItems(HorizontalAlign.Start)
         .width('100%')

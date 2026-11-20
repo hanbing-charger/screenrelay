@@ -28,6 +28,12 @@ export interface SavedState {
   items: UploadItem[]
 }
 
+export interface SavedPairing {
+  deviceId: string
+  endpoint: string
+  token: string
+}
+
 export class RelayStorage {
   private readonly statePath: string
   private readonly spoolPath: string
@@ -40,12 +46,28 @@ export class RelayStorage {
     }
   }
 
-  load(): SavedState {
+  private read(): SavedState | undefined {
     if (fileIo.accessSync(this.statePath)) {
       const state = JSON.parse(fileIo.readTextSync(this.statePath)) as SavedState
       if (state.version !== 1 || !Array.isArray(state.items)) {
         throw new Error('传输记录格式无法识别')
       }
+      return state
+    }
+    return undefined
+  }
+
+  pairing(): SavedPairing | undefined {
+    const state = this.read()
+    if (state === undefined || !state.deviceId || !state.endpoint || !state.token) {
+      return undefined
+    }
+    return { deviceId: state.deviceId, endpoint: state.endpoint, token: state.token }
+  }
+
+  load(): SavedState {
+    const state = this.read()
+    if (state !== undefined) {
       if (!state.deviceId) {
         state.deviceId = util.generateRandomUUID()
         this.save(state)
@@ -63,11 +85,11 @@ export class RelayStorage {
       }
       return state
     }
-    const state: SavedState = {
+    const initial: SavedState = {
       version: 1, deviceId: util.generateRandomUUID(), endpoint: '', token: '', autoSince: 0, items: []
     }
-    this.save(state)
-    return state
+    this.save(initial)
+    return initial
   }
 
   save(state: SavedState): void {

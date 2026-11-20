@@ -4,6 +4,15 @@ import { rcp } from '@kit.RemoteCommunicationKit'
 import type { UploadItem } from './Storage'
 
 const LONG_TRANSFER_MS = 30 * 60 * 1000
+export const MAX_DIAGNOSTIC_BYTES = 1024 * 1024
+
+interface FileUpload {
+  target: string
+  filename: string
+  kind: string
+  type: string
+  uploadId: string
+}
 
 interface PairingRequest {
   pairingCode: string
@@ -112,24 +121,43 @@ export async function pairReceiver(endpoint: string, code: string, deviceId: str
 }
 
 export async function sendCapture(item: UploadItem, source: string, token: string): Promise<UploadResponse> {
+  const upload: FileUpload = {
+    target: item.target, filename: item.filename, kind: item.kind, type: mediaType(item.filename),
+    uploadId: 'ohos-' + item.id
+  }
+  return sendFile(upload, source, token)
+}
+
+export async function sendDiagnostic(endpoint: string, token: string, source: string, name: string,
+  uploadId: string): Promise<UploadResponse> {
+  const upload: FileUpload = {
+    target: endpoint, filename: name, kind: 'diagnostic', type: 'text/plain; charset=utf-8', uploadId: uploadId
+  }
+  return sendFile(upload, source, token)
+}
+
+async function sendFile(upload: FileUpload, source: string, token: string): Promise<UploadResponse> {
   const file = await fileIo.open(source, fileIo.OpenMode.READ_ONLY)
   try {
     const stat = await fileIo.stat(file.fd)
     if (stat.size <= 0) {
       throw new Error('文件尚未写入完成')
     }
+    if (upload.kind === 'diagnostic' && stat.size > MAX_DIAGNOSTIC_BYTES) {
+      throw new Error('诊断日志超过 1 MiB')
+    }
 
     const headers: rcp.RequestHeaders = {
       'Authorization': 'Bearer ' + token,
-      'Content-Type': mediaType(item.filename),
+      'Content-Type': upload.type,
       'Content-Length': stat.size.toString(),
-      'X-Filename': filenameHeader(item.filename),
-      'X-Media-Kind': item.kind,
-      'X-Upload-Id': 'ohos-' + item.id
+      'X-Filename': filenameHeader(upload.filename),
+      'X-Media-Kind': upload.kind,
+      'X-Upload-Id': upload.uploadId
     }
     const body = new rcp.UploadFromFile(file.fd)
-    const request = new rcp.Request(item.target + '/api/v1/uploads', 'POST', headers, body)
-    const session = createSession(LONG_TRANSFER_MS)
+    const request = new rcp.Request(upload.target + '/api/v1/uploads', 'POST', headers, body)
+    const session = createSession(upload.kind === 'diagnostic' ? 30000 : LONG_TRANSFER_MS)
     try {
       const result = await session.fetch(request)
       const retryAfter = result.headers['retry-after'] ?? result.headers['Retry-After']
