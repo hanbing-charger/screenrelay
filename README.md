@@ -13,6 +13,8 @@
 
 ## 手机端
 
+[下载 Android APK 和 iOS IPA](https://github.com/hanbing-charger/screenrelay/releases/tag/mobile-v0.1.0)
+
 在手机端填入地址和配对码，授予所需权限后开启同步，再截一张图或录一段视频。截图和录屏需要先保存到系统相册。自动同步从首次开启时开始收集。鸿蒙应用可手动选择相册中的文件。
 
 | 手机系统 | 使用方式 |

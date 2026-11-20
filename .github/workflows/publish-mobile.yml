@@ -1,0 +1,60 @@
+name: Publish Mobile Packages
+'on':
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Existing draft release tag"
+        type: string
+        required: true
+      android_run_id:
+        description: "Successful Build Android APK run ID"
+        type: string
+        required: true
+      ios_run_id:
+        description: "Successful Build iOS IPA run ID"
+        type: string
+        required: true
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - name: Download the Android build
+        uses: actions/download-artifact@v7
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.android_run_id }}
+          name: screenrelay-android-apk
+          path: ${{ runner.temp }}/screenrelay-mobile
+
+      - name: Download the iOS build
+        uses: actions/download-artifact@v7
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.ios_run_id }}
+          name: screenrelay-ios-unsigned-ipa
+          path: ${{ runner.temp }}/screenrelay-mobile
+
+      - name: Upload both packages to the draft release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          if [[ $(gh release view --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft -- "$RELEASE_TAG") != true ]]; then
+            echo "::error::Choose an existing draft release."
+            exit 1
+          fi
+          package_dir="$RUNNER_TEMP/screenrelay-mobile"
+          apk="$package_dir/ScreenRelay-Android-debug.apk"
+          ipa="$package_dir/ScreenRelay-unsigned.ipa"
+          unzip -tq "$apk"
+          unzip -tq "$ipa"
+          gh release upload --repo "$GITHUB_REPOSITORY" -- "$RELEASE_TAG" \
+            "$apk#Android · 已验签的调试 APK" \
+            "$ipa#iOS · 未签名真机 IPA"
