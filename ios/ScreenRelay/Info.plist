@@ -29,9 +29,9 @@
     <key>NSCameraUsageDescription</key>
     <string>扫描电脑接收端的二维码，以便在局域网内配对或接收文件。</string>
     <key>NSLocalNetworkUsageDescription</key>
-    <string>连接局域网内的电脑，上传所选图片和诊断日志，或接收电脑分享的文件。</string>
+    <string>连接局域网内的电脑，上传所选图片、视频、文件和诊断日志，或接收电脑分享的文件。</string>
     <key>NSPhotoLibraryUsageDescription</key>
-    <string>上传你从相册中选中的图片。</string>
+    <string>上传你从相册中选中的图片和视频。</string>
     <key>NSAppTransportSecurity</key>
     <dict>
         <key>NSAllowsLocalNetworking</key>

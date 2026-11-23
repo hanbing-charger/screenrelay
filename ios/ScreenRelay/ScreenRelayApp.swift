@@ -29,13 +29,13 @@ final class ScreenRelayDelegate: UIResponder, UIApplicationDelegate {
 final class ScreenRelaySceneDelegate: UIResponder, UIWindowSceneDelegate {
     var window: UIWindow?
     private let downloads = FileReceiveModel()
-    private let imageUploads = ImageUploadModel()
+    private let uploads = ManualUploadModel()
 
     func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options: UIScene.ConnectionOptions) {
         guard let windowScene = scene as? UIWindowScene else { return }
         let window = UIWindow(windowScene: windowScene)
         window.rootViewController = UIHostingController(rootView: HomeView(
-            model: SyncModel.shared, downloads: downloads, imageUploads: imageUploads
+            model: SyncModel.shared, downloads: downloads, uploads: uploads
         ))
         self.window = window
         window.makeKeyAndVisible()
@@ -106,13 +106,15 @@ private struct HomeView: View {
     private enum Modal: String, Identifiable {
         case download
         case images
+        case videos
+        case files
 
         var id: String { rawValue }
     }
 
     @ObservedObject var model: SyncModel
     @ObservedObject var downloads: FileReceiveModel
-    @ObservedObject var imageUploads: ImageUploadModel
+    @ObservedObject var uploads: ManualUploadModel
     @State private var modal: Modal?
     @State private var confirmDiscard = false
 
@@ -120,7 +122,7 @@ private struct HomeView: View {
         NavigationView {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
-                    imageUpload
+                    uploadActions
                     fileReceive
                     pairingLink
                     diagnosticsLink
@@ -133,13 +135,16 @@ private struct HomeView: View {
             .background(HomePalette.canvas.edgesIgnoringSafeArea(.all))
             .navigationBarTitle("截屏快传", displayMode: .large)
             .sheet(item: $modal) { purpose in
-                if purpose == .images {
-                    PhotoPickerSheet { selection in
-                        guard modal == .images else { return }
-                        modal = nil
-                        imageUploads.accept(selection, sync: model)
+                switch purpose {
+                case .images, .videos:
+                    MediaPickerSheet(kind: purpose == .images ? .photo : .video) { selection in
+                        accept(selection, for: purpose)
                     }
-                } else {
+                case .files:
+                    DocumentPickerSheet { selection in
+                        accept(selection, for: purpose)
+                    }
+                case .download:
                     PairQRCodeSheet(
                         instruction: "将相机对准电脑接收端的文件分享二维码。",
                         unavailableMessage: "相机当前不可用，请检查相机后重试。"
@@ -152,9 +157,9 @@ private struct HomeView: View {
             }
             .alert(isPresented: $confirmDiscard) {
                 Alert(
-                    title: Text("清除待传图片？"),
-                    message: Text("仅删除应用保存的待传副本，相册原图会保留。"),
-                    primaryButton: .destructive(Text("清除"), action: imageUploads.discardPending),
+                    title: Text("清除待传文件？"),
+                    message: Text("仅删除应用保存的待传副本。"),
+                    primaryButton: .destructive(Text("清除"), action: uploads.discardPending),
                     secondaryButton: .cancel()
                 )
             }
@@ -163,11 +168,17 @@ private struct HomeView: View {
         .accentColor(HomePalette.link)
     }
 
-    private var canChooseImages: Bool {
-        model.settings != nil && !imageUploads.busy
+    private func accept(_ selection: [UploadSelection], for purpose: Modal) {
+        guard modal == purpose else { return }
+        modal = nil
+        uploads.accept(selection, sync: model)
     }
 
-    private var imageUpload: some View {
+    private var canUpload: Bool {
+        model.settings != nil && !uploads.busy
+    }
+
+    private var uploadActions: some View {
         VStack(alignment: .leading, spacing: 10) {
             Button {
                 modal = .images
@@ -186,34 +197,58 @@ private struct HomeView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 16))
             }
             .buttonStyle(PlainButtonStyle())
-            .disabled(!canChooseImages)
+            .disabled(!canUpload)
+
+            secondaryUpload("选择视频上传", symbol: "video", picker: .videos)
+            secondaryUpload("选择文件上传", symbol: "doc", picker: .files)
 
             if model.settings == nil {
-                Text("配对电脑后可上传图片。").font(.subheadline).foregroundColor(.secondary)
+                Text("配对电脑后可上传。").font(.subheadline).foregroundColor(.secondary)
             }
-            if let message = imageUploads.message {
+            if let message = uploads.message {
                 HStack(alignment: .top, spacing: 8) {
-                    if imageUploads.busy {
+                    if uploads.busy {
                         ActivityIndicator().frame(width: 22, height: 22).accessibility(hidden: true)
                     }
                     Text(message).foregroundColor(.secondary)
                 }
             }
-            if !imageUploads.pending.isEmpty {
+            if !uploads.pending.isEmpty {
                 VStack(alignment: .leading, spacing: 0) {
-                    Text("待传图片 \(imageUploads.pending.count) 张")
+                    Text("待传文件 \(uploads.pending.count) 项")
                         .font(.subheadline)
                         .foregroundColor(.secondary)
-                    Button("重试待传图片") { imageUploads.retry(sync: model) }
+                    Button("重试待传文件") { uploads.retry(sync: model) }
                         .frame(minHeight: 44, alignment: .leading)
-                        .disabled(!canChooseImages)
+                        .disabled(!canUpload)
                     Button("清除待传副本") { confirmDiscard = true }
                         .frame(minHeight: 44, alignment: .leading)
-                        .disabled(imageUploads.busy)
+                        .disabled(uploads.busy)
                 }
             }
         }
         .modifier(HomeCard())
+    }
+
+    private func secondaryUpload(_ title: String, symbol: String, picker: Modal) -> some View {
+        Button {
+            modal = picker
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: symbol).accessibility(hidden: true)
+                Text(title).fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+            }
+            .font(.headline)
+            .foregroundColor(canUpload ? HomePalette.link : .secondary)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .frame(minHeight: 44)
+            .background(HomePalette.canvas)
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+        }
+        .buttonStyle(PlainButtonStyle())
+        .disabled(!canUpload)
     }
 
     private var fileReceive: some View {

@@ -18,7 +18,7 @@ import java.util.Base64;
 
 final class UploadClient {
     private static final long DIAGNOSTIC_LIMIT = 1024 * 1024;
-    private static final String PHOTO_KIND = "photo";
+    private static final String DIAGNOSTIC_KIND = "diagnostic";
 
     private UploadClient() {}
 
@@ -33,11 +33,11 @@ final class UploadClient {
         }
     }
 
-    static int uploadPhoto(Settings.Configuration configuration, File file, String id,
-                           String name, String mime) throws IOException {
+    static int uploadManual(Settings.Configuration configuration, File file, String id,
+                            String kind, String name, String mime) throws IOException {
         try (FileInputStream source = new FileInputStream(file)) {
             return upload(configuration, source,
-                    new Payload(name, PHOTO_KIND, id, mime, source.getChannel().size()));
+                    new Payload(name, kind, id, mime, source.getChannel().size()));
         }
     }
 
@@ -57,7 +57,7 @@ final class UploadClient {
             int response;
             try {
                 response = upload(configuration, source, new Payload(
-                        report.getName(), "diagnostic", uploadId, "text/plain; charset=utf-8", size));
+                        report.getName(), DIAGNOSTIC_KIND, uploadId, "text/plain; charset=utf-8", size));
             } catch (IOException networkError) {
                 throw new IOException("连接中断，请确认电脑接收端正在运行并重试。", networkError);
             }
@@ -107,7 +107,9 @@ final class UploadClient {
             connection.setRequestProperty("X-Media-Kind", payload.kind());
             connection.setRequestProperty("X-Upload-Id", payload.id());
             connection.setRequestProperty("Content-Type", payload.mime());
-            connection.setRequestProperty("Expect", "100-continue");
+            if (payload.size() > 0) {
+                connection.setRequestProperty("Expect", "100-continue");
+            }
             try (OutputStream target = connection.getOutputStream()) {
                 byte[] buffer = new byte[64 * 1024];
                 int count;
@@ -117,7 +119,7 @@ final class UploadClient {
             } catch (IOException transferFailed) {
                 try {
                     int response = connection.getResponseCode();
-                    if (response >= 401 || (PHOTO_KIND.equals(payload.kind())
+                    if (response >= 401 || (!DIAGNOSTIC_KIND.equals(payload.kind())
                             && response == HttpURLConnection.HTTP_BAD_REQUEST)) {
                         return response;
                     }

@@ -24,16 +24,37 @@ import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-final class ManualImageUploads {
+final class ManualUploads {
     private static final long[] RETRY_MS = {1_000L, 3_000L};
     private static final int BUFFER_BYTES = 64 * 1024;
-    private static ManualImageUploads instance;
+    private static ManualUploads instance;
+
+    enum Kind {
+        PHOTO("photo", "image/*"), VIDEO("video", "video/*"), FILE("file", "*/*");
+
+        final String wireKind;
+        final String pickerMime;
+
+        Kind(String wireKind, String pickerMime) {
+            this.wireKind = wireKind;
+            this.pickerMime = pickerMime;
+        }
+
+        static Kind fromWire(String wireKind) throws JSONException {
+            for (Kind kind : values()) {
+                if (kind.wireKind.equals(wireKind)) {
+                    return kind;
+                }
+            }
+            throw new JSONException("Unknown saved upload type");
+        }
+    }
 
     record State(String message, boolean busy, int pending) {}
 
-    static synchronized ManualImageUploads get(Context context) {
+    static synchronized ManualUploads get(Context context) {
         if (instance == null) {
-            instance = new ManualImageUploads(context.getApplicationContext());
+            instance = new ManualUploads(context.getApplicationContext());
         }
         return instance;
     }
@@ -43,11 +64,12 @@ final class ManualImageUploads {
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
     private volatile State state;
 
-    private ManualImageUploads(Context context) {
+    private ManualUploads(Context context) {
+        // Keep the old directory and upload IDs so previously staged photos are retryable.
         directory = new File(context.getFilesDir(), "selected-photo-uploads");
         resolver = context.getContentResolver();
         int pending = pending().length;
-        state = new State(pending == 0 ? "" : "上次待传的图片已保留，可以继续上传。", false, pending);
+        state = new State(pending == 0 ? "" : "上次待传的文件已保留，可以继续上传。", false, pending);
         worker.execute(() -> {
             File[] unfinishedCopies = directory.listFiles(file -> file.getName().startsWith(".copy-")
                     || file.getName().startsWith(".done-"));
@@ -63,25 +85,27 @@ final class ManualImageUploads {
         return state;
     }
 
-    synchronized void start(List<Uri> selected, Settings.Configuration configuration) {
+    synchronized void start(List<Uri> selected, Kind kind, Settings.Configuration configuration) {
         if (state.busy() || state.pending() != 0 || selected.isEmpty()) {
             return;
         }
-        state = new State("正在读取所选图片…", true, 0);
+        state = new State("正在读取所选文件…", true, 0);
         worker.execute(() -> {
             int unreadable = 0;
             String selectionError = "";
             for (int i = 0; i < selected.size(); i++) {
-                state = new State("正在读取图片 " + (i + 1) + " / " + selected.size(), true, 0);
+                state = new State("正在读取文件 " + (i + 1) + " / " + selected.size(), true, 0);
                 try {
-                    stage(selected.get(i), configuration.origin());
+                    stage(selected.get(i), kind, configuration.origin());
                 } catch (IOException | JSONException | RuntimeException failure) {
                     unreadable++;
-                    selectionError = failure instanceof UnsupportedPhoto ? failure.getMessage()
-                            : "请检查图片来源和手机存储空间，再重新选择。";
+                    if (selectionError.isEmpty()) {
+                        selectionError = failure instanceof UnsupportedDocument ? failure.getMessage()
+                                : "请检查文件来源和手机存储空间，再重新选择。";
+                    }
                 }
             }
-            String result = unreadable == 0 ? "" : "有 " + unreadable + " 张图片未能读取。" + selectionError;
+            String result = unreadable == 0 ? "" : "有 " + unreadable + " 个文件未能上传。" + selectionError;
             send(configuration, result);
         });
     }
@@ -98,21 +122,21 @@ final class ManualImageUploads {
         if (state.busy() || state.pending() == 0) {
             return;
         }
-        state = new State("正在清理待传图片…", true, state.pending());
+        state = new State("正在清理暂存文件…", true, state.pending());
         worker.execute(() -> {
-            for (File photo : pending()) {
+            for (File item : pending()) {
                 try {
-                    remove(photo);
+                    remove(item);
                 } catch (IOException failure) {
                     break;
                 }
             }
             int count = pending().length;
-            state = new State(count == 0 ? "待传图片已清除。" : "暂时无法清除部分图片，请重试。", false, count);
+            state = new State(count == 0 ? "暂存文件已清除。" : "暂时无法清除部分暂存文件，请重试。", false, count);
         });
     }
 
-    private void stage(Uri uri, String origin) throws IOException, JSONException {
+    private void stage(Uri uri, Kind kind, String origin) throws IOException, JSONException {
         Files.createDirectories(directory.toPath());
         File staging = Files.createTempDirectory(directory.toPath(), ".copy-").toFile();
         try {
@@ -120,9 +144,9 @@ final class ManualImageUploads {
             String mime = resolver.getType(uri);
             InputStream original = resolver.openInputStream(uri);
             if (original == null) {
-                throw new IOException("Selected image is unavailable");
+                throw new IOException("Selected file is unavailable");
             }
-            ManualPhoto image;
+            ManualDocument document;
             try (BufferedInputStream source = new BufferedInputStream(original);
                  FileOutputStream target = new FileOutputStream(new File(staging, "body"))) {
                 source.mark(32);
@@ -135,14 +159,21 @@ final class ManualImageUploads {
                     }
                     count += read;
                 }
-                if (count == 0) {
-                    throw new IOException("Selected image is empty");
+                if (count == 0 && kind != Kind.FILE) {
+                    throw new UnsupportedDocument("图片和视频需要包含有效内容。");
                 }
                 source.reset();
                 try {
-                    image = ManualPhoto.identify(filename, mime, Arrays.copyOf(prefix, count));
+                    document = switch (kind) {
+                        case PHOTO -> {
+                            ManualPhoto photo = ManualPhoto.identify(filename, mime, Arrays.copyOf(prefix, count));
+                            yield new ManualDocument(photo.filename(), photo.mime());
+                        }
+                        case VIDEO -> ManualDocument.video(filename, mime);
+                        case FILE -> ManualDocument.file(filename, mime);
+                    };
                 } catch (IllegalArgumentException unsupported) {
-                    throw new UnsupportedPhoto(unsupported.getMessage());
+                    throw new UnsupportedDocument(unsupported.getMessage());
                 }
                 byte[] buffer = new byte[BUFFER_BYTES];
                 while ((count = source.read(buffer)) != -1) {
@@ -152,14 +183,15 @@ final class ManualImageUploads {
             }
 
             JSONObject details = new JSONObject();
-            details.put("filename", image.filename());
-            details.put("mime", image.mime());
+            details.put("filename", document.filename());
+            details.put("mime", document.mime());
             details.put("origin", origin);
+            details.put("kind", kind.wireKind);
             try (FileOutputStream metadata = new FileOutputStream(new File(staging, "details"))) {
                 metadata.write(details.toString().getBytes(StandardCharsets.UTF_8));
                 metadata.getFD().sync();
             }
-            File queued = new File(directory, "photo-" + UUID.randomUUID());
+            File queued = new File(directory, kind.wireKind + "-" + UUID.randomUUID());
             Files.move(staging.toPath(), queued.toPath(), StandardCopyOption.ATOMIC_MOVE);
         } finally {
             deleteStaging(staging);
@@ -179,32 +211,34 @@ final class ManualImageUploads {
         String error = "";
         for (int i = 0; i < queued.length; i++) {
             File folder = queued[i];
-            state = new State("正在上传图片 " + (i + 1) + " / " + queued.length, true, queued.length - sent);
+            state = new State("正在上传文件 " + (i + 1) + " / " + queued.length, true, queued.length - sent);
             try {
                 JSONObject details = new JSONObject(new String(Files.readAllBytes(new File(folder, "details").toPath()),
                         StandardCharsets.UTF_8));
                 if (!configuration.origin().equals(details.getString("origin"))) {
-                    error = "待传图片属于另一台电脑，请切换回原来的配对，或清除待传图片。";
+                    error = "待传文件属于另一台电脑，请切换回原来的配对，或清除暂存文件。";
                     break;
                 }
-                int status = uploadWithRetry(configuration, folder, details.getString("filename"), details.getString("mime"));
+                Kind kind = Kind.fromWire(details.optString("kind", Kind.PHOTO.wireKind));
+                int status = uploadWithRetry(configuration, folder, kind, details.getString("filename"),
+                        details.getString("mime"));
                 if (status == 200 || status == 201) {
                     remove(folder);
                     sent++;
                     continue;
                 }
                 if (status == 413) {
-                    error = "有图片超过电脑接收端的大小限制。";
+                    error = "有文件超过电脑接收端的大小限制。";
                     continue;
                 }
                 if (status == 401 || status == 403) {
                     error = "电脑拒绝配对，请重新配对后继续上传。";
                 } else if (status == 400 || status == 404 || status == 405 || status == 415) {
-                    error = "电脑未接收所选图片，请将接收端升级到 v0.7.0 或更新版本后继续上传。";
+                    error = "电脑未接收所选文件，请将接收端升级到 v1.0.0 或更新版本后继续上传。";
                 } else if (status == 408 || status == 429 || status >= 500) {
-                    error = "电脑暂时无法接收图片，请稍后继续上传。";
+                    error = "电脑暂时无法接收文件，请稍后继续上传。";
                 } else {
-                    error = "电脑未接收图片（HTTP " + status + "）。";
+                    error = "电脑未接收文件（HTTP " + status + "）。";
                 }
                 break;
             } catch (JSONException malformed) {
@@ -212,7 +246,7 @@ final class ManualImageUploads {
                 try {
                     remove(folder);
                 } catch (IOException failure) {
-                    error = "无法清理损坏的待传图片，请重试。";
+                    error = "无法清理损坏的暂存文件，请重试。";
                     break;
                 }
             } catch (IOException | RuntimeException failure) {
@@ -220,19 +254,19 @@ final class ManualImageUploads {
                 break;
             }
         }
-        String result = sent == 0 ? "" : "已上传 " + sent + " 张图片。";
+        String result = sent == 0 ? "" : "已上传 " + sent + " 个文件。";
         if (unavailable > 0) {
-            result += "有 " + unavailable + " 张暂存图片无法读取，请重新选择。";
+            result += "有 " + unavailable + " 个暂存文件无法读取，请重新选择。";
         }
         state = new State(result + selectionResult + error, false, pending().length);
     }
 
-    private int uploadWithRetry(Settings.Configuration configuration, File folder, String filename, String mime)
+    private int uploadWithRetry(Settings.Configuration configuration, File folder, Kind kind, String filename, String mime)
             throws IOException {
         for (int attempt = 0; ; attempt++) {
             try {
-                int status = UploadClient.uploadPhoto(configuration, new File(folder, "body"),
-                        folder.getName(), filename, mime);
+                int status = UploadClient.uploadManual(configuration, new File(folder, "body"),
+                        folder.getName(), kind.wireKind, filename, mime);
                 if ((status != 408 && status != 429 && status < 500) || attempt == RETRY_MS.length) {
                     return status;
                 }
@@ -251,12 +285,16 @@ final class ManualImageUploads {
     }
 
     private File[] pending() {
-        File[] files = directory.listFiles(file -> file.isDirectory() && file.getName().startsWith("photo-"));
+        File[] files = directory.listFiles(file -> file.isDirectory() && isQueued(file.getName()));
         if (files == null) {
             return new File[0];
         }
         Arrays.sort(files, Comparator.comparingLong(File::lastModified).thenComparing(File::getName));
         return files;
+    }
+
+    private static boolean isQueued(String name) {
+        return name.startsWith("photo-") || name.startsWith("video-") || name.startsWith("file-");
     }
 
     private void remove(File item) throws IOException {
@@ -272,8 +310,8 @@ final class ManualImageUploads {
         folder.delete();
     }
 
-    private static final class UnsupportedPhoto extends IOException {
-        UnsupportedPhoto(String message) {
+    private static final class UnsupportedDocument extends IOException {
+        UnsupportedDocument(String message) {
             super(message);
         }
     }

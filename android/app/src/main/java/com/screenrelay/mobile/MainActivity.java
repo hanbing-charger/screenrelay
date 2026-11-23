@@ -51,6 +51,8 @@ public final class MainActivity extends Activity {
     private static final int DOWNLOAD_CAMERA_PERMISSION_REQUEST = 5;
     private static final int DOWNLOAD_SCAN_REQUEST = 6;
     private static final int CHOOSE_IMAGES_REQUEST = 7;
+    private static final int CHOOSE_VIDEOS_REQUEST = 8;
+    private static final int CHOOSE_FILES_REQUEST = 9;
     private static final String MANUAL_PAIRING_VISIBLE = "manualPairingVisible";
     private static final int BLUE = Color.rgb(37, 88, 221);
     private static final int INK = Color.rgb(23, 36, 62);
@@ -63,10 +65,10 @@ public final class MainActivity extends Activity {
     private final Handler main = new Handler(Looper.getMainLooper());
     private final ExecutorService connectionTest = Executors.newSingleThreadExecutor();
     private final Runnable refreshDownload = this::refreshDownloadStatus;
-    private final Runnable refreshImages = this::refreshImageUploads;
+    private final Runnable refreshUploads = this::refreshManualUploads;
     private Settings settings;
     private IncomingDownloads downloads;
-    private ManualImageUploads imageUploads;
+    private ManualUploads manualUploads;
     private boolean manualPairingVisible;
     private EditText address;
     private EditText secret;
@@ -86,10 +88,12 @@ public final class MainActivity extends Activity {
     private ProgressBar downloadProgress;
     private String downloadFeedback = "";
     private Button chooseImages;
-    private Button retryImages;
-    private Button discardImages;
-    private TextView imageStatus;
-    private String imageFeedback = "";
+    private Button chooseVideos;
+    private Button chooseFiles;
+    private Button retryUploads;
+    private Button discardUploads;
+    private TextView uploadStatus;
+    private String uploadFeedback = "";
     private boolean pairingBusy;
 
     @Override
@@ -97,7 +101,7 @@ public final class MainActivity extends Activity {
         super.onCreate(state);
         settings = new Settings(this);
         downloads = IncomingDownloads.get(this);
-        imageUploads = ManualImageUploads.get(this);
+        manualUploads = ManualUploads.get(this);
         manualPairingVisible = state != null && state.getBoolean(MANUAL_PAIRING_VISIBLE);
         getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
         setContentView(makeScreen());
@@ -118,13 +122,13 @@ public final class MainActivity extends Activity {
         super.onResume();
         refreshPairing();
         refreshDownloadStatus();
-        refreshImageUploads();
+        refreshManualUploads();
     }
 
     @Override
     protected void onPause() {
         main.removeCallbacks(refreshDownload);
-        main.removeCallbacks(refreshImages);
+        main.removeCallbacks(refreshUploads);
         super.onPause();
     }
 
@@ -176,8 +180,8 @@ public final class MainActivity extends Activity {
         TextView title = text("截屏快传", 36, INK, true);
         title.setAccessibilityHeading(true);
         add(page, title, 4);
-        add(page, text("在同一局域网内传送图片和文件", 15, SECONDARY, false), 6);
-        add(page, makeImageUploadCard(), 24);
+        add(page, text("在同一局域网内传送图片、视频和文件", 15, SECONDARY, false), 6);
+        add(page, makeUploadCard(), 24);
         add(page, makeDownloadCard(), 14);
         add(page, makePairingCard(), 18);
 
@@ -250,101 +254,110 @@ public final class MainActivity extends Activity {
         editPairing.setText(manualPairingVisible ? "收起配对设置" : paired ? "编辑配对" : "手动配对");
     }
 
-    private View makeImageUploadCard() {
-        LinearLayout images = card();
+    private View makeUploadCard() {
+        LinearLayout uploads = card();
         chooseImages = button("选择图片上传", true);
-        chooseImages.setOnClickListener(view -> openImagePicker());
-        add(images, chooseImages, 0);
-        add(images, text("支持多选，按原文件发送", 14, SECONDARY, false), 9);
-        imageStatus = text("", 14, SECONDARY, false);
-        imageStatus.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
-        add(images, imageStatus, 8);
-        retryImages = button("继续上传图片", false);
-        retryImages.setOnClickListener(view -> {
-            Settings.Configuration configuration = imageUploadConfiguration();
+        chooseImages.setOnClickListener(view -> openUploadPicker(ManualUploads.Kind.PHOTO, CHOOSE_IMAGES_REQUEST));
+        add(uploads, chooseImages, 0);
+        chooseVideos = button("选择视频上传", false);
+        chooseVideos.setOnClickListener(view -> openUploadPicker(ManualUploads.Kind.VIDEO, CHOOSE_VIDEOS_REQUEST));
+        add(uploads, chooseVideos, 8);
+        chooseFiles = button("选择文件上传", false);
+        chooseFiles.setOnClickListener(view -> openUploadPicker(ManualUploads.Kind.FILE, CHOOSE_FILES_REQUEST));
+        add(uploads, chooseFiles, 8);
+        add(uploads, text("支持多选，按原文件发送", 14, SECONDARY, false), 9);
+        uploadStatus = text("", 14, SECONDARY, false);
+        uploadStatus.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
+        add(uploads, uploadStatus, 8);
+        retryUploads = button("继续上传", false);
+        retryUploads.setOnClickListener(view -> {
+            Settings.Configuration configuration = uploadConfiguration();
             if (configuration != null) {
-                imageFeedback = "";
-                imageUploads.resume(configuration);
-                refreshImageUploads();
+                uploadFeedback = "";
+                manualUploads.resume(configuration);
+                refreshManualUploads();
             }
         });
-        add(images, retryImages, 8);
-        discardImages = button("清除暂存图片", false);
-        discardImages.setOnClickListener(view -> {
-            imageFeedback = "";
-            imageUploads.discard();
-            refreshImageUploads();
+        add(uploads, retryUploads, 8);
+        discardUploads = button("清除暂存文件", false);
+        discardUploads.setOnClickListener(view -> {
+            uploadFeedback = "";
+            manualUploads.discard();
+            refreshManualUploads();
         });
-        add(images, discardImages, 6);
-        return images;
+        add(uploads, discardUploads, 6);
+        return uploads;
     }
 
-    private void refreshImageUploads() {
-        main.removeCallbacks(refreshImages);
-        ManualImageUploads.State uploads = imageUploads.state();
-        String message = imageFeedback.isEmpty() ? uploads.message() : imageFeedback;
-        if (!TextUtils.equals(message, imageStatus.getText())) {
-            imageStatus.setText(message);
+    private void refreshManualUploads() {
+        main.removeCallbacks(refreshUploads);
+        ManualUploads.State uploads = manualUploads.state();
+        String message = uploadFeedback.isEmpty() ? uploads.message() : uploadFeedback;
+        if (!TextUtils.equals(message, uploadStatus.getText())) {
+            uploadStatus.setText(message);
         }
-        imageStatus.setVisibility(message.isEmpty() ? View.GONE : View.VISIBLE);
-        chooseImages.setEnabled(!pairingBusy && !uploads.busy() && uploads.pending() == 0);
-        retryImages.setVisibility(!uploads.busy() && uploads.pending() > 0 ? View.VISIBLE : View.GONE);
-        retryImages.setEnabled(!pairingBusy);
-        discardImages.setVisibility(!uploads.busy() && uploads.pending() > 0 ? View.VISIBLE : View.GONE);
+        uploadStatus.setVisibility(message.isEmpty() ? View.GONE : View.VISIBLE);
+        boolean canChoose = !pairingBusy && !uploads.busy() && uploads.pending() == 0;
+        chooseImages.setEnabled(canChoose);
+        chooseVideos.setEnabled(canChoose);
+        chooseFiles.setEnabled(canChoose);
+        retryUploads.setVisibility(!uploads.busy() && uploads.pending() > 0 ? View.VISIBLE : View.GONE);
+        retryUploads.setEnabled(!pairingBusy);
+        discardUploads.setVisibility(!uploads.busy() && uploads.pending() > 0 ? View.VISIBLE : View.GONE);
         if (uploads.busy()) {
-            main.postDelayed(refreshImages, 250);
+            main.postDelayed(refreshUploads, 250);
         }
     }
 
-    private Settings.Configuration imageUploadConfiguration() {
+    private Settings.Configuration uploadConfiguration() {
         Settings.Configuration configuration = settings.configuration();
         if (!configuration.origin().isEmpty() && !configuration.token().isEmpty()) {
             return configuration;
         }
-        imageFeedback = "请先在下方扫码配对，或填入电脑地址和密钥后点「保存配对」。";
-        refreshImageUploads();
+        uploadFeedback = "请先在下方扫码配对，或填入电脑地址和密钥后点「保存配对」。";
+        refreshManualUploads();
         return null;
     }
 
-    private void openImagePicker() {
-        if (imageUploadConfiguration() == null) {
+    private void openUploadPicker(ManualUploads.Kind kind, int requestCode) {
+        if (uploadConfiguration() == null) {
             return;
         }
         Intent picker = new Intent(Intent.ACTION_OPEN_DOCUMENT)
                 .addCategory(Intent.CATEGORY_OPENABLE)
-                .setType("image/*")
+                .setType(kind.pickerMime)
                 .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 .putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
         try {
-            startActivityForResult(picker, CHOOSE_IMAGES_REQUEST);
+            startActivityForResult(picker, requestCode);
         } catch (ActivityNotFoundException unavailable) {
-            imageFeedback = "手机的系统文件选择器不可用。请启用系统文件应用后重试。";
-            refreshImageUploads();
+            uploadFeedback = "手机的系统文件选择器不可用。请启用系统文件应用后重试。";
+            refreshManualUploads();
         }
     }
 
-    private void uploadPickedImages(Intent data) {
-        Settings.Configuration configuration = imageUploadConfiguration();
+    private void uploadPickedFiles(Intent data, ManualUploads.Kind kind) {
+        Settings.Configuration configuration = uploadConfiguration();
         if (configuration == null) {
             return;
         }
         Set<Uri> selected = new LinkedHashSet<>();
-        ClipData images = data.getClipData();
-        if (images != null) {
-            for (int i = 0; i < images.getItemCount(); i++) {
-                Uri uri = images.getItemAt(i).getUri();
+        ClipData files = data.getClipData();
+        if (files != null) {
+            for (int i = 0; i < files.getItemCount(); i++) {
+                Uri uri = files.getItemAt(i).getUri();
                 if (uri != null && "content".equals(uri.getScheme())) {
                     selected.add(uri);
                 }
             }
         }
-        Uri image = data.getData();
-        if (image != null && "content".equals(image.getScheme())) {
-            selected.add(image);
+        Uri file = data.getData();
+        if (file != null && "content".equals(file.getScheme())) {
+            selected.add(file);
         }
-        imageFeedback = selected.isEmpty() ? "未能打开所选图片，请在系统文件选择器中重新选择。" : "";
-        imageUploads.start(new ArrayList<>(selected), configuration);
-        refreshImageUploads();
+        uploadFeedback = selected.isEmpty() ? "未能打开所选文件，请在系统文件选择器中重新选择。" : "";
+        manualUploads.start(new ArrayList<>(selected), kind, configuration);
+        refreshManualUploads();
     }
 
     private View makeDownloadCard() {
@@ -439,9 +452,15 @@ public final class MainActivity extends Activity {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
-        if (requestCode == CHOOSE_IMAGES_REQUEST) {
+        ManualUploads.Kind picked = switch (requestCode) {
+            case CHOOSE_IMAGES_REQUEST -> ManualUploads.Kind.PHOTO;
+            case CHOOSE_VIDEOS_REQUEST -> ManualUploads.Kind.VIDEO;
+            case CHOOSE_FILES_REQUEST -> ManualUploads.Kind.FILE;
+            default -> null;
+        };
+        if (picked != null) {
             if (resultCode == RESULT_OK && data != null) {
-                uploadPickedImages(data);
+                uploadPickedFiles(data, picked);
             }
             return;
         }
@@ -501,7 +520,7 @@ public final class MainActivity extends Activity {
             control.setEnabled(!busy);
         }
         refreshDownloadStatus();
-        refreshImageUploads();
+        refreshManualUploads();
     }
 
     private void finishPairing(Settings.Configuration configuration, String error) {
@@ -523,9 +542,9 @@ public final class MainActivity extends Activity {
         if (!configuration.equals(settings.configuration())) {
             settings.saveConfiguration(configuration);
         }
-        imageFeedback = "";
+        uploadFeedback = "";
         showFeedback(message);
-        refreshImageUploads();
+        refreshManualUploads();
         refreshPairing();
     }
 

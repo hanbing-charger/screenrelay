@@ -112,7 +112,7 @@ enum ReceiverIssue: LocalizedError {
         case .unavailableStorage:
             return "无法打开本机配对记录。"
         case .emptyFile:
-            return "相册导出的文件为空。"
+            return "所选媒体为空，或无法读取待传文件的大小。"
         case .invalidDiagnosticSize:
             return "诊断日志为空或超过 1 MiB。"
         }
@@ -274,10 +274,10 @@ final class Receiver {
                                     sizeLimit: DiagnosticRecord.maxBytes)
     }
 
-    func uploadPickedImage(_ image: PendingImage, file: URL, settings: ReceiverSettings, installationID: String) async throws -> Int {
-        let identifier = SHA256.hash(data: Data("\(installationID):photo:\(image.id.uuidString)".utf8))
+    func uploadPickedFile(_ item: PendingUpload, file: URL, settings: ReceiverSettings, installationID: String) async throws -> Int {
+        let identifier = SHA256.hash(data: Data("\(installationID):\(item.kind.rawValue):\(item.id.uuidString)".utf8))
             .map { String(format: "%02x", $0) }.joined()
-        return try await uploadFile(file, filename: image.filename, kind: "photo", contentType: image.mimeType,
+        return try await uploadFile(file, filename: item.filename, kind: item.kind.rawValue, contentType: item.mimeType,
                                     identifier: identifier, settings: settings)
     }
 
@@ -285,9 +285,11 @@ final class Receiver {
         _ file: URL, filename: String, kind: String, contentType: String, identifier: String,
         settings: ReceiverSettings, sizeLimit: Int? = nil
     ) async throws -> Int {
-        let size = try file.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+        guard let size = try file.resourceValues(forKeys: [.fileSizeKey]).fileSize else {
+            throw ReceiverIssue.emptyFile
+        }
         if let sizeLimit, size <= 0 || size > sizeLimit { throw ReceiverIssue.invalidDiagnosticSize }
-        guard size > 0 else { throw ReceiverIssue.emptyFile }
+        guard size > 0 || (kind == UploadKind.file.rawValue && size == 0) else { throw ReceiverIssue.emptyFile }
         var request = URLRequest(url: settings.endpoint("uploads"))
         request.httpMethod = "POST"
         request.timeoutInterval = Self.uploadIdleTimeout
@@ -299,7 +301,7 @@ final class Receiver {
         request.setValue(contentType, forHTTPHeaderField: "Content-Type")
         request.setValue(String(size), forHTTPHeaderField: "Content-Length")
 
-        let (data, response) = try await send(request, uploading: file)
+        let (data, response) = try await send(request, uploading: size == 0 ? nil : file)
         guard let response = response as? HTTPURLResponse else { throw ReceiverIssue.response(nil) }
         if response.statusCode == 200 || response.statusCode == 201 {
             guard let receipt = try? JSONDecoder().decode(Receipt.self, from: data), !receipt.id.isEmpty else {
