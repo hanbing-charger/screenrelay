@@ -1,13 +1,11 @@
 package com.screenrelay.mobile;
 
-import android.content.ContentResolver;
 import android.content.Context;
 
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.InterruptedIOException;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.Proxy;
@@ -17,7 +15,6 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Base64;
-import java.util.function.BooleanSupplier;
 
 final class UploadClient {
     private static final long DIAGNOSTIC_LIMIT = 1024 * 1024;
@@ -36,22 +33,11 @@ final class UploadClient {
         }
     }
 
-    static int upload(ContentResolver resolver, Settings.Configuration configuration,
-                      SyncStore.Upload upload, BooleanSupplier cancelled) throws IOException {
-        try (InputStream source = resolver.openInputStream(upload.uri())) {
-            if (source == null) {
-                throw new IOException("MediaStore returned no stream");
-            }
-            return upload(configuration, source, new Payload(
-                    upload.name(), upload.kind(), upload.id(), upload.mime(), upload.size()), cancelled);
-        }
-    }
-
     static int uploadPhoto(Settings.Configuration configuration, File file, String id,
                            String name, String mime) throws IOException {
         try (FileInputStream source = new FileInputStream(file)) {
             return upload(configuration, source,
-                    new Payload(name, PHOTO_KIND, id, mime, source.getChannel().size()), () -> false);
+                    new Payload(name, PHOTO_KIND, id, mime, source.getChannel().size()));
         }
     }
 
@@ -71,7 +57,7 @@ final class UploadClient {
             int response;
             try {
                 response = upload(configuration, source, new Payload(
-                        report.getName(), "diagnostic", uploadId, "text/plain; charset=utf-8", size), () -> false);
+                        report.getName(), "diagnostic", uploadId, "text/plain; charset=utf-8", size));
             } catch (IOException networkError) {
                 throw new IOException("连接中断，请确认电脑接收端正在运行并重试。", networkError);
             }
@@ -109,7 +95,7 @@ final class UploadClient {
     }
 
     private static int upload(Settings.Configuration configuration, InputStream source,
-                              Payload payload, BooleanSupplier cancelled) throws IOException {
+                              Payload payload) throws IOException {
         HttpURLConnection connection = connect(configuration.origin(), "/api/v1/uploads");
         try {
             connection.setRequestMethod("POST");
@@ -125,23 +111,18 @@ final class UploadClient {
             try (OutputStream target = connection.getOutputStream()) {
                 byte[] buffer = new byte[64 * 1024];
                 int count;
-                while (!cancelled.getAsBoolean() && (count = source.read(buffer)) != -1) {
+                while ((count = source.read(buffer)) != -1) {
                     target.write(buffer, 0, count);
                 }
-                if (cancelled.getAsBoolean()) {
-                    throw new InterruptedIOException("Upload was cancelled");
-                }
             } catch (IOException transferFailed) {
-                if (!cancelled.getAsBoolean()) {
-                    try {
-                        int response = connection.getResponseCode();
-                        if (response >= 401 || (PHOTO_KIND.equals(payload.kind())
-                                && response == HttpURLConnection.HTTP_BAD_REQUEST)) {
-                            return response;
-                        }
-                    } catch (IOException responseUnavailable) {
-                        // The receiver may already have closed the connection.
+                try {
+                    int response = connection.getResponseCode();
+                    if (response >= 401 || (PHOTO_KIND.equals(payload.kind())
+                            && response == HttpURLConnection.HTTP_BAD_REQUEST)) {
+                        return response;
                     }
+                } catch (IOException responseUnavailable) {
+                    // The receiver may already have closed the connection.
                 }
                 throw transferFailed;
             }

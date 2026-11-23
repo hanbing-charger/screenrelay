@@ -1,10 +1,8 @@
 package com.screenrelay.mobile;
 
-import android.Manifest;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
-import android.os.Build;
 
 import java.net.URI;
 import java.net.URISyntaxException;
@@ -52,18 +50,6 @@ final class Settings {
         return new Configuration(values.getString("origin", ""), values.getString("token", ""));
     }
 
-    boolean isEnabled() {
-        return values.getBoolean("enabled", false);
-    }
-
-    int revision() {
-        return values.getInt("revision", 0);
-    }
-
-    long firstEnabledAt() {
-        return values.getLong("firstEnabledAt", -1);
-    }
-
     String installationId() {
         synchronized (INSTALLATION_ID_LOCK) {
             String id = values.getString("installationId", "");
@@ -75,54 +61,14 @@ final class Settings {
         }
     }
 
-    void enable(Configuration configuration) {
-        long firstEnabledAt = firstEnabledAt();
-        configurationChange(configuration)
-                .putBoolean("enabled", true)
-                .putLong("firstEnabledAt", firstEnabledAt < 0
-                        ? System.currentTimeMillis() / 1000 : firstEnabledAt)
+    void saveConfiguration(Configuration configuration) {
+        values.edit().putString("origin", configuration.origin())
+                .putString("token", configuration.token())
                 .apply();
     }
 
-    void saveConfiguration(Configuration configuration) {
-        configurationChange(configuration).apply();
-    }
-
-    private SharedPreferences.Editor configurationChange(Configuration configuration) {
-        return values.edit().putString("origin", configuration.origin())
-                .putString("token", configuration.token())
-                .putInt("revision", revision() + 1);
-    }
-
-    void disable() {
-        values.edit().putBoolean("enabled", false).putInt("revision", revision() + 1).apply();
-    }
-
-    void setStatus(String status) {
-        values.edit().putString("status", status).apply();
-    }
-
-    String status() {
-        return values.getString("status", "");
-    }
-
-    static String[] mediaPermissions() {
-        if (Build.VERSION.SDK_INT >= 34) {
-            return new String[]{Manifest.permission.READ_MEDIA_IMAGES, Manifest.permission.READ_MEDIA_VIDEO,
-                    Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED};
-        }
-        if (Build.VERSION.SDK_INT >= 33) {
-            return new String[]{Manifest.permission.READ_MEDIA_IMAGES, Manifest.permission.READ_MEDIA_VIDEO};
-        }
-        return new String[]{Manifest.permission.READ_EXTERNAL_STORAGE};
-    }
-
-    static boolean hasMediaAccess(Context context) {
-        if (Build.VERSION.SDK_INT >= 33) {
-            return granted(context, Manifest.permission.READ_MEDIA_IMAGES)
-                    && granted(context, Manifest.permission.READ_MEDIA_VIDEO);
-        }
-        return granted(context, Manifest.permission.READ_EXTERNAL_STORAGE);
+    void clearLegacyAutomaticSettings() {
+        values.edit().remove("enabled").remove("firstEnabledAt").remove("revision").remove("status").apply();
     }
 
     static boolean granted(Context context, String permission) {

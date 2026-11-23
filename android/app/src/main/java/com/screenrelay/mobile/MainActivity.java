@@ -6,11 +6,14 @@ import android.content.ActivityNotFoundException;
 import android.content.ClipData;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.content.res.ColorStateList;
 import android.graphics.Color;
 import android.graphics.Insets;
 import android.graphics.Rect;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
+import android.graphics.drawable.RippleDrawable;
+import android.graphics.drawable.StateListDrawable;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -19,7 +22,10 @@ import android.os.Looper;
 import android.text.InputType;
 import android.text.TextUtils;
 import android.text.format.Formatter;
+import android.util.StateSet;
+import android.view.Gravity;
 import android.view.View;
+import android.view.ViewGroup;
 import android.view.WindowInsets;
 import android.view.WindowManager;
 import android.widget.Button;
@@ -27,7 +33,6 @@ import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.ScrollView;
-import android.widget.Switch;
 import android.widget.TextView;
 
 import com.journeyapps.barcodescanner.ScanIntentResult;
@@ -36,46 +41,42 @@ import com.journeyapps.barcodescanner.ScanOptions;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
-import java.util.Locale;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public final class MainActivity extends Activity {
-    private static final int MEDIA_PERMISSION_REQUEST = 1;
-    private static final int NOTIFICATION_PERMISSION_REQUEST = 2;
     private static final int CAMERA_PERMISSION_REQUEST = 3;
     private static final int QR_SCAN_REQUEST = 4;
     private static final int DOWNLOAD_CAMERA_PERMISSION_REQUEST = 5;
     private static final int DOWNLOAD_SCAN_REQUEST = 6;
     private static final int CHOOSE_IMAGES_REQUEST = 7;
-    private static final String WAITING_FOR_AUTO_PERMISSION = "waitingForAutoPermission";
+    private static final String MANUAL_PAIRING_VISIBLE = "manualPairingVisible";
     private static final int BLUE = Color.rgb(37, 88, 221);
     private static final int INK = Color.rgb(23, 36, 62);
     private static final int SECONDARY = Color.rgb(72, 88, 113);
     private static final int BORDER = Color.rgb(218, 226, 240);
+    private static final int BACKGROUND = Color.rgb(243, 246, 252);
+    private static final int BLUE_SURFACE = Color.rgb(238, 244, 255);
+    private static final int BLUE_BORDER = Color.rgb(205, 218, 247);
 
     private final Handler main = new Handler(Looper.getMainLooper());
     private final ExecutorService connectionTest = Executors.newSingleThreadExecutor();
-    private final Runnable refresh = this::refreshDashboard;
     private final Runnable refreshDownload = this::refreshDownloadStatus;
     private final Runnable refreshImages = this::refreshImageUploads;
     private Settings settings;
     private IncomingDownloads downloads;
     private ManualImageUploads imageUploads;
-    private boolean waitingForAutoPermission;
-    private boolean updatingAutomaticSwitch;
+    private boolean manualPairingVisible;
     private EditText address;
     private EditText secret;
-    private TextView status;
-    private TextView tracking;
-    private TextView statistics;
+    private TextView pairingStatus;
+    private TextView pairingEndpoint;
     private TextView feedback;
     private Button savePairing;
     private Button scan;
-    private Switch automaticUpload;
-    private TextView automaticFeedback;
-    private Button retry;
+    private Button editPairing;
+    private LinearLayout pairingForm;
     private Button test;
     private Button scanDownload;
     private Button resumeDownload;
@@ -97,7 +98,7 @@ public final class MainActivity extends Activity {
         settings = new Settings(this);
         downloads = IncomingDownloads.get(this);
         imageUploads = ManualImageUploads.get(this);
-        waitingForAutoPermission = state != null && state.getBoolean(WAITING_FOR_AUTO_PERMISSION);
+        manualPairingVisible = state != null && state.getBoolean(MANUAL_PAIRING_VISIBLE);
         getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
         setContentView(makeScreen());
         Settings.Configuration saved = settings.configuration();
@@ -109,23 +110,19 @@ public final class MainActivity extends Activity {
     @Override
     protected void onSaveInstanceState(Bundle state) {
         super.onSaveInstanceState(state);
-        state.putBoolean(WAITING_FOR_AUTO_PERMISSION, waitingForAutoPermission);
+        state.putBoolean(MANUAL_PAIRING_VISIBLE, manualPairingVisible);
     }
 
     @Override
     protected void onResume() {
         super.onResume();
-        if (settings.isEnabled() && Settings.hasMediaAccess(this) && !WatchService.isRunning()) {
-            ensureRunning();
-        }
-        refreshDashboard();
+        refreshPairing();
         refreshDownloadStatus();
         refreshImageUploads();
     }
 
     @Override
     protected void onPause() {
-        main.removeCallbacks(refresh);
         main.removeCallbacks(refreshDownload);
         main.removeCallbacks(refreshImages);
         super.onPause();
@@ -142,11 +139,25 @@ public final class MainActivity extends Activity {
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
         scroll.setClipToPadding(false);
+        scroll.setBackgroundColor(BACKGROUND);
 
+        LinearLayout content = column();
+        content.setGravity(Gravity.CENTER_HORIZONTAL);
+        scroll.addView(content);
         LinearLayout page = column();
         page.setFocusableInTouchMode(true);
-        scroll.addView(page);
-        int margin = dp(24);
+        content.addView(page, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        content.addOnLayoutChangeListener((view, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) -> {
+            int width = Math.min(dp(540), right - left);
+            ViewGroup.LayoutParams layout = page.getLayoutParams();
+            if (width > 0 && layout.width != width) {
+                layout.width = width;
+                page.setLayoutParams(layout);
+            }
+        });
+
+        int margin = dp(22);
         scroll.setOnApplyWindowInsetsListener((view, insets) -> {
             if (Build.VERSION.SDK_INT >= 30) {
                 Insets safe = insets.getInsets(WindowInsets.Type.systemBars()
@@ -162,64 +173,81 @@ public final class MainActivity extends Activity {
             return insets;
         });
 
-        TextView title = text("截屏快传", 32, INK, true);
-        add(page, title, 0);
-        add(page, text("把手机新保存的截图和录屏发送到电脑。", 15, SECONDARY, false), 8);
+        TextView title = text("截屏快传", 36, INK, true);
+        title.setAccessibilityHeading(true);
+        add(page, title, 4);
+        add(page, text("在同一局域网内传送图片和文件", 15, SECONDARY, false), 6);
+        add(page, makeImageUploadCard(), 24);
+        add(page, makeDownloadCard(), 14);
+        add(page, makePairingCard(), 18);
 
-        LinearLayout dashboard = card();
-        add(page, dashboard, 24);
-        status = text("", 17, INK, true);
-        status.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
-        add(dashboard, status, 0);
-        tracking = text("", 14, SECONDARY, false);
-        add(dashboard, tracking, 6);
-        statistics = text("", 14, SECONDARY, false);
-        add(dashboard, statistics, 10);
+        Button diagnostics = button("诊断日志", false);
+        diagnostics.setOnClickListener(view -> startActivity(new Intent(this, DiagnosticActivity.class)));
+        add(page, diagnostics, 14);
+        return scroll;
+    }
 
-        add(page, makeImageUploadCard(), 16);
-        add(page, makeDownloadCard(), 16);
-
+    private View makePairingCard() {
         LinearLayout pairing = card();
-        add(page, pairing, 16);
-        add(pairing, text("配对电脑", 19, INK, true), 0);
-        scan = button("扫码配对", true);
+        TextView title = text("电脑配对", 19, INK, true);
+        title.setAccessibilityHeading(true);
+        add(pairing, title, 0);
+
+        pairingStatus = text("", 13, BLUE, true);
+        pairingStatus.setPadding(dp(10), dp(5), dp(10), dp(5));
+        pairingStatus.setBackground(rounded(BLUE_SURFACE, BLUE_SURFACE, 12));
+        pairingStatus.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
+        LinearLayout.LayoutParams label = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        label.topMargin = dp(8);
+        pairing.addView(pairingStatus, label);
+        pairingEndpoint = text("", 14, SECONDARY, false);
+        add(pairing, pairingEndpoint, 8);
+
+        scan = button("扫码配对", false);
         scan.setOnClickListener(view -> onScan(false));
-        add(pairing, scan, 12);
+        add(pairing, scan, 14);
+        editPairing = button("手动配对", false);
+        editPairing.setOnClickListener(view -> {
+            manualPairingVisible = !manualPairingVisible;
+            refreshPairing();
+        });
+        add(pairing, editPairing, 8);
         feedback = text("", 14, SECONDARY, false);
         feedback.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
         feedback.setVisibility(View.GONE);
         add(pairing, feedback, 8);
-        add(pairing, text("也可以手动填写电脑端显示的地址和密钥。", 14, SECONDARY, false), 12);
 
+        pairingForm = column();
+        add(pairing, pairingForm, 6);
         address = field("http://192.168.1.10:8765",
                 InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
-        labelField(pairing, "电脑地址", address);
+        labelField(pairingForm, "电脑地址", address);
         secret = field("电脑上的配对密钥",
                 InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
-        labelField(pairing, "配对密钥", secret);
+        labelField(pairingForm, "配对密钥", secret);
 
-        savePairing = button("保存配对", false);
+        savePairing = button("保存配对", true);
         savePairing.setOnClickListener(view -> {
             Settings.Configuration configuration = readConfiguration();
             if (configuration != null) {
                 savePairing(configuration, "已保存配对。");
             }
         });
-        add(pairing, savePairing, 18);
-
+        add(pairingForm, savePairing, 18);
         test = button("测试连接", false);
         test.setOnClickListener(view -> onTest());
-        add(pairing, test, 8);
+        add(pairingForm, test, 8);
+        return pairing;
+    }
 
-        add(page, makeAutomaticUploadCard(), 16);
-
-        Button diagnostics = button("诊断日志", false);
-        diagnostics.setOnClickListener(view -> startActivity(new Intent(this, DiagnosticActivity.class)));
-        add(page, diagnostics, 12);
-
-        add(page, text("请让手机和电脑连接同一可信 Wi-Fi，并保持电脑接收端运行。系统限制后台任务时，上传可能延迟。",
-                13, SECONDARY, false), 16);
-        return scroll;
+    private void refreshPairing() {
+        Settings.Configuration saved = settings.configuration();
+        boolean paired = !saved.origin().isEmpty() && !saved.token().isEmpty();
+        pairingStatus.setText(paired ? "已保存配对" : "未配对");
+        pairingEndpoint.setText(paired ? saved.origin() : "用电脑接收端显示的二维码或配对密钥进行配对。");
+        pairingForm.setVisibility(manualPairingVisible ? View.VISIBLE : View.GONE);
+        editPairing.setText(manualPairingVisible ? "收起配对设置" : paired ? "编辑配对" : "手动配对");
     }
 
     private View makeImageUploadCard() {
@@ -227,6 +255,7 @@ public final class MainActivity extends Activity {
         chooseImages = button("选择图片上传", true);
         chooseImages.setOnClickListener(view -> openImagePicker());
         add(images, chooseImages, 0);
+        add(images, text("支持多选，按原文件发送", 14, SECONDARY, false), 9);
         imageStatus = text("", 14, SECONDARY, false);
         imageStatus.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
         add(images, imageStatus, 8);
@@ -320,9 +349,10 @@ public final class MainActivity extends Activity {
 
     private View makeDownloadCard() {
         LinearLayout download = card();
-        scanDownload = button("扫码接收文件", true);
+        scanDownload = button("扫码接收文件", false);
         scanDownload.setOnClickListener(view -> onScan(true));
         add(download, scanDownload, 0);
+        add(download, text("文件保存到手机的「下载」目录", 14, SECONDARY, false), 9);
         downloadStatus = text("", 14, SECONDARY, false);
         downloadStatus.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
         add(download, downloadStatus, 8);
@@ -467,10 +497,9 @@ public final class MainActivity extends Activity {
 
     private void setPairingBusy(boolean busy) {
         pairingBusy = busy;
-        for (View control : new View[]{scan, savePairing, test, retry, address, secret}) {
+        for (View control : new View[]{scan, savePairing, editPairing, test, address, secret}) {
             control.setEnabled(!busy);
         }
-        refreshAutomaticSwitch();
         refreshDownloadStatus();
         refreshImageUploads();
     }
@@ -486,114 +515,18 @@ public final class MainActivity extends Activity {
         }
         address.setText(configuration.origin());
         secret.setText(configuration.token());
+        manualPairingVisible = false;
         savePairing(configuration, "已配对电脑。");
     }
 
     private void savePairing(Settings.Configuration configuration, String message) {
         if (!configuration.equals(settings.configuration())) {
             settings.saveConfiguration(configuration);
-            settings.setStatus("");
         }
         imageFeedback = "";
-        showAutomaticFeedback("");
         showFeedback(message);
         refreshImageUploads();
-        refreshDashboard();
-    }
-
-    private View makeAutomaticUploadCard() {
-        LinearLayout automatic = card();
-        automaticUpload = new Switch(this);
-        automaticUpload.setText("自动上传截图和录屏");
-        automaticUpload.setTextColor(INK);
-        automaticUpload.setTextSize(16);
-        automaticUpload.setMinHeight(dp(48));
-        automaticUpload.setOnCheckedChangeListener((button, checked) -> {
-            if (!updatingAutomaticSwitch) {
-                changeAutomaticUpload(checked);
-            }
-        });
-        add(automatic, automaticUpload, 0);
-        automaticFeedback = text("", 14, SECONDARY, false);
-        automaticFeedback.setVisibility(View.GONE);
-        automaticFeedback.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
-        add(automatic, automaticFeedback, 6);
-        retry = button("重试待上传和失败的文件", false);
-        retry.setOnClickListener(view -> {
-            if (settings.isEnabled() && Settings.hasMediaAccess(this)) {
-                SyncEngine.retry(this);
-                ensureRunning();
-                showAutomaticFeedback("已安排重试。");
-            }
-        });
-        add(automatic, retry, 8);
-        return automatic;
-    }
-
-    private void changeAutomaticUpload(boolean checked) {
-        if (!checked) {
-            pauseAutomaticUpload();
-            return;
-        }
-        Settings.Configuration configuration = settings.configuration();
-        if (configuration.origin().isEmpty() || configuration.token().isEmpty()) {
-            showAutomaticFeedback("请先保存电脑配对，再开启自动上传。");
-            refreshAutomaticSwitch();
-            return;
-        }
-        if (!Settings.hasMediaAccess(this)) {
-            waitingForAutoPermission = true;
-            refreshAutomaticSwitch();
-            requestPermissions(Settings.mediaPermissions(), MEDIA_PERMISSION_REQUEST);
-        } else {
-            enableAutomaticUpload(configuration);
-        }
-    }
-
-    private void refreshAutomaticSwitch() {
-        updatingAutomaticSwitch = true;
-        automaticUpload.setChecked(settings.isEnabled() || waitingForAutoPermission);
-        updatingAutomaticSwitch = false;
-        automaticUpload.setEnabled(!pairingBusy && !waitingForAutoPermission);
-    }
-
-    private void showAutomaticFeedback(String message) {
-        automaticFeedback.setText(message);
-        automaticFeedback.setVisibility(message.isEmpty() ? View.GONE : View.VISIBLE);
-    }
-
-    private void enableAutomaticUpload(Settings.Configuration configuration) {
-        settings.enable(configuration);
-        settings.setStatus("正在检查新的截屏和录屏。");
-        SyncEngine.retry(this);
-        ensureRunning();
-        showAutomaticFeedback("自动上传已开启。");
-        if (Build.VERSION.SDK_INT >= 33
-                && !Settings.granted(this, Manifest.permission.POST_NOTIFICATIONS)
-                && !getPreferences(MODE_PRIVATE).getBoolean("askedNotifications", false)) {
-            getPreferences(MODE_PRIVATE).edit().putBoolean("askedNotifications", true).apply();
-            requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS},
-                    NOTIFICATION_PERMISSION_REQUEST);
-        }
-        refreshDashboard();
-    }
-
-    private void ensureRunning() {
-        boolean scheduled = SyncJob.ensureScheduled(this);
-        try {
-            startForegroundService(new Intent(this, WatchService.class));
-        } catch (IllegalStateException limited) {
-            settings.setStatus(scheduled ? "系统将在后台继续同步，上传可能延迟。"
-                    : "系统暂未安排自动上传，请稍后重新开启。");
-        }
-    }
-
-    private void pauseAutomaticUpload() {
-        settings.disable();
-        SyncJob.cancel(this);
-        stopService(new Intent(this, WatchService.class));
-        showAutomaticFeedback("自动上传已暂停。恢复后可补传期间保存的截屏和录屏。");
-        refreshDashboard();
+        refreshPairing();
     }
 
     private void onTest() {
@@ -650,49 +583,7 @@ public final class MainActivity extends Activity {
             } else {
                 showScannerFeedback(download, "请在系统设置中允许使用摄像头。");
             }
-        } else if (code == MEDIA_PERMISSION_REQUEST && waitingForAutoPermission) {
-            waitingForAutoPermission = false;
-            if (!Settings.hasMediaAccess(this)) {
-                showAutomaticFeedback("自动发现截图和录屏需要访问所有照片和视频。可以用「选择图片上传」发送选中的照片。");
-                refreshDashboard();
-                return;
-            }
-            Settings.Configuration configuration = settings.configuration();
-            if (!configuration.origin().isEmpty() && !configuration.token().isEmpty()) {
-                enableAutomaticUpload(configuration);
-            } else {
-                refreshDashboard();
-            }
         }
-    }
-
-    private void refreshDashboard() {
-        main.removeCallbacks(refresh);
-        boolean enabled = settings.isEnabled();
-        boolean running = WatchService.isRunning();
-        boolean authorized = Settings.hasMediaAccess(this);
-        String detail = settings.status();
-        if (!enabled) {
-            detail = settings.configuration().origin().isEmpty() ? "等待配对"
-                    : settings.firstEnabledAt() < 0 ? "已保存配对，自动上传待开启" : "自动上传已暂停";
-        } else if (!authorized) {
-            detail = "需要相册访问权限";
-        } else if (detail.isEmpty()) {
-            detail = running ? "正在监测截屏和录屏" : "等待系统安排同步";
-        }
-        if (!TextUtils.equals(status.getText(), detail)) {
-            status.setText(detail);
-        }
-        tracking.setVisibility(enabled && authorized ? View.VISIBLE : View.GONE);
-        tracking.setText(running ? "实时监测已开启" : "由系统安排后台同步，上传可能延迟");
-        SyncStore.Counts counts = SyncStore.get(this).counts();
-        statistics.setText(String.format(Locale.SIMPLIFIED_CHINESE,
-                "待上传 %d   ·   已上传 %d   ·   失败 %d",
-                counts.waiting(), counts.uploaded(), counts.failed()));
-        refreshAutomaticSwitch();
-        retry.setVisibility(enabled && authorized && (counts.failed() > 0 || counts.waiting() > 0)
-                ? View.VISIBLE : View.GONE);
-        main.postDelayed(refresh, 3_000);
     }
 
     private LinearLayout column() {
@@ -703,8 +594,8 @@ public final class MainActivity extends Activity {
 
     private LinearLayout card() {
         LinearLayout card = column();
-        card.setBackground(rounded(Color.WHITE, BORDER, 17));
-        int padding = dp(18);
+        card.setBackground(rounded(Color.WHITE, BORDER, 20));
+        int padding = dp(16);
         card.setPadding(padding, padding, padding, padding);
         return card;
     }
@@ -731,7 +622,10 @@ public final class MainActivity extends Activity {
         input.setHintTextColor(SECONDARY);
         input.setPadding(dp(12), dp(10), dp(12), dp(10));
         input.setMinHeight(dp(48));
-        input.setBackground(rounded(Color.WHITE, BORDER, 9));
+        StateListDrawable background = new StateListDrawable();
+        background.addState(new int[]{android.R.attr.state_focused}, rounded(Color.WHITE, BLUE, 10));
+        background.addState(StateSet.WILD_CARD, rounded(Color.WHITE, BORDER, 10));
+        input.setBackground(background);
         input.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO);
         return input;
     }
@@ -747,10 +641,20 @@ public final class MainActivity extends Activity {
         Button button = new Button(this);
         button.setText(label);
         button.setAllCaps(false);
-        button.setTextSize(15);
-        button.setTextColor(primary ? Color.WHITE : BLUE);
-        button.setMinimumHeight(dp(48));
-        button.setBackground(rounded(primary ? BLUE : Color.WHITE, primary ? BLUE : BORDER, 10));
+        button.setTextSize(primary ? 17 : 15);
+        button.setTypeface(button.getTypeface(), Typeface.BOLD);
+        int[] disabled = {-android.R.attr.state_enabled};
+        button.setTextColor(new ColorStateList(new int[][]{disabled, StateSet.WILD_CARD},
+                new int[]{SECONDARY, primary ? Color.WHITE : BLUE}));
+        StateListDrawable background = new StateListDrawable();
+        int disabledFill = Color.rgb(231, 237, 247);
+        background.addState(disabled, rounded(disabledFill, BORDER, 13));
+        background.addState(StateSet.WILD_CARD, rounded(primary ? BLUE : BLUE_SURFACE,
+                primary ? BLUE : BLUE_BORDER, 13));
+        ColorStateList ripple = ColorStateList.valueOf(primary ? 0x38FFFFFF : 0x262558DD);
+        button.setBackground(new RippleDrawable(ripple, background, null));
+        button.setPadding(dp(16), dp(11), dp(16), dp(11));
+        button.setMinimumHeight(dp(52));
         return button;
     }
 
