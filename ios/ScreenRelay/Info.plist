@@ -29,11 +29,9 @@
     <key>NSCameraUsageDescription</key>
     <string>扫描电脑接收端的二维码，以便在局域网内配对或接收文件。</string>
     <key>NSLocalNetworkUsageDescription</key>
-    <string>连接局域网内的电脑，上传截屏和录屏，或接收电脑分享的文件。</string>
+    <string>连接局域网内的电脑，上传所选图片和诊断日志，或接收电脑分享的文件。</string>
     <key>NSPhotoLibraryUsageDescription</key>
-    <string>查找相册中新保存的截屏和录屏，或上传你手动选中的图片。</string>
-    <key>PHPhotoLibraryPreventAutomaticLimitedAccessAlert</key>
-    <true/>
+    <string>上传你从相册中选中的图片。</string>
     <key>NSAppTransportSecurity</key>
     <dict>
         <key>NSAllowsLocalNetworking</key>
@@ -77,14 +75,6 @@
             </dict>
         </dict>
     </dict>
-    <key>BGTaskSchedulerPermittedIdentifiers</key>
-    <array>
-        <string>$(PRODUCT_BUNDLE_IDENTIFIER).scan</string>
-    </array>
-    <key>UIBackgroundModes</key>
-    <array>
-        <string>processing</string>
-    </array>
     <key>UIApplicationSceneManifest</key>
     <dict>
         <key>UIApplicationSupportsMultipleScenes</key>

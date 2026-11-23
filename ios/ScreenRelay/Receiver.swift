@@ -110,7 +110,7 @@ enum ReceiverIssue: LocalizedError {
         case .expiredPairingCode:
             return "配对二维码已失效，请在电脑上生成新的二维码后重试。"
         case .unavailableStorage:
-            return "无法打开本机同步记录。"
+            return "无法打开本机配对记录。"
         case .emptyFile:
             return "相册导出的文件为空。"
         case .invalidDiagnosticSize:
@@ -265,13 +265,6 @@ final class Receiver {
             throw ReceiverIssue.unexpectedResponse
         }
         return settings
-    }
-
-    func upload(_ capture: Capture, file: URL, settings: ReceiverSettings, installationID: String) async throws -> Int {
-        let identifier = SHA256.hash(data: Data("\(installationID):\(capture.localIdentifier)".utf8))
-            .map { String(format: "%02x", $0) }.joined()
-        return try await uploadFile(file, filename: capture.filename, kind: capture.kind.rawValue,
-                                    contentType: capture.mimeType, identifier: identifier, settings: settings)
     }
 
     func uploadDiagnostic(_ record: DiagnosticRecord, settings: ReceiverSettings, installationID: String) async throws -> Int {

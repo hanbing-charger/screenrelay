@@ -8,7 +8,6 @@
 /* Begin PBXBuildFile section */
         660000000000000000000001 /* ScreenRelayApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 660000000000000000000011 /* ScreenRelayApp.swift */; };
         660000000000000000000002 /* SyncModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 660000000000000000000012 /* SyncModel.swift */; };
-        660000000000000000000003 /* CaptureLibrary.swift in Sources */ = {isa = PBXBuildFile; fileRef = 660000000000000000000013 /* CaptureLibrary.swift */; };
         660000000000000000000004 /* Receiver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 660000000000000000000014 /* Receiver.swift */; };
         660000000000000000000005 /* PairQRCodeSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 660000000000000000000017 /* PairQRCodeSheet.swift */; };
         660000000000000000000006 /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 660000000000000000000018 /* LaunchScreen.storyboard */; };
@@ -22,7 +21,6 @@
 /* Begin PBXFileReference section */
         660000000000000000000011 /* ScreenRelayApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenRelayApp.swift; sourceTree = "<group>"; };
         660000000000000000000012 /* SyncModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncModel.swift; sourceTree = "<group>"; };
-        660000000000000000000013 /* CaptureLibrary.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CaptureLibrary.swift; sourceTree = "<group>"; };
         660000000000000000000014 /* Receiver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Receiver.swift; sourceTree = "<group>"; };
         660000000000000000000015 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
         660000000000000000000016 /* ScreenRelay.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ScreenRelay.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -58,7 +56,6 @@
             children = (
                 660000000000000000000011 /* ScreenRelayApp.swift */,
                 660000000000000000000012 /* SyncModel.swift */,
-                660000000000000000000013 /* CaptureLibrary.swift */,
                 660000000000000000000014 /* Receiver.swift */,
                 660000000000000000000017 /* PairQRCodeSheet.swift */,
                 660000000000000000000018 /* LaunchScreen.storyboard */,
@@ -108,9 +105,6 @@
                 TargetAttributes = {
                     660000000000000000000041 = {
                         CreatedOnToolsVersion = 15.0;
-                        SystemCapabilities = {
-                            com.apple.BackgroundModes = { enabled = 1; };
-                        };
                     };
                 };
             };
@@ -143,7 +137,6 @@
             files = (
                 660000000000000000000001 /* ScreenRelayApp.swift in Sources */,
                 660000000000000000000002 /* SyncModel.swift in Sources */,
-                660000000000000000000003 /* CaptureLibrary.swift in Sources */,
                 660000000000000000000004 /* Receiver.swift in Sources */,
                 660000000000000000000005 /* PairQRCodeSheet.swift in Sources */,
                 660000000000000000000007 /* FileReceive.swift in Sources */,

@@ -132,7 +132,19 @@ enum ImageUploadStore {
     static func stage(_ resource: PHAssetResource) async throws -> PendingImage {
         let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? files.removeItem(at: file) }
-        try await exportPhotoResource(resource, to: file)
+        let options = PHAssetResourceRequestOptions()
+        options.isNetworkAccessAllowed = true
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            PHAssetResourceManager.default().writeData(for: resource, toFile: file, options: options) { error in
+                if let error {
+                    continuation.resume(throwing: error)
+                } else {
+                    continuation.resume()
+                }
+            }
+        }
+        try files.setAttributes([.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
+                                ofItemAtPath: file.path)
         return try stage(file, suggestedName: resource.originalFilename, typeHint: resource.uniformTypeIdentifier)
     }
 

@@ -1,5 +1,3 @@
-import BackgroundTasks
-import Combine
 import SwiftUI
 import UIKit
 
@@ -12,15 +10,6 @@ final class ScreenRelayDelegate: UIResponder, UIApplicationDelegate {
     ) -> Bool {
         if #available(iOS 14.0, *) {
             DiagnosticsCollector.shared.start()
-        }
-        BGTaskScheduler.shared.register(forTaskWithIdentifier: SyncModel.processingID, using: .main) { task in
-            guard let processing = task as? BGProcessingTask else {
-                task.setTaskCompleted(success: false)
-                return
-            }
-            Task { @MainActor in
-                await SyncModel.shared.runBackground(processing)
-            }
         }
         return true
     }
@@ -45,19 +34,11 @@ final class ScreenRelaySceneDelegate: UIResponder, UIWindowSceneDelegate {
     func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options: UIScene.ConnectionOptions) {
         guard let windowScene = scene as? UIWindowScene else { return }
         let window = UIWindow(windowScene: windowScene)
-        window.rootViewController = UIHostingController(rootView: PairingView(
+        window.rootViewController = UIHostingController(rootView: HomeView(
             model: SyncModel.shared, downloads: downloads, imageUploads: imageUploads
         ))
         self.window = window
         window.makeKeyAndVisible()
-    }
-
-    func sceneDidBecomeActive(_ scene: UIScene) {
-        SyncModel.shared.becameActive()
-    }
-
-    func sceneDidEnterBackground(_ scene: UIScene) {
-        SyncModel.shared.enteredBackground()
     }
 }
 
@@ -75,7 +56,9 @@ private struct FileReceiveProgress: UIViewRepresentable {
     let value: Float
 
     func makeUIView(context: Context) -> UIProgressView {
-        UIProgressView(progressViewStyle: .default)
+        let progress = UIProgressView(progressViewStyle: .default)
+        progress.progressTintColor = HomePalette.actionColor
+        return progress
     }
 
     func updateUIView(_ view: UIProgressView, context: Context) {
@@ -83,10 +66,44 @@ private struct FileReceiveProgress: UIViewRepresentable {
     }
 }
 
+private enum HomePalette {
+    static let actionColor = UIColor(red: 37.0 / 255, green: 88.0 / 255, blue: 221.0 / 255, alpha: 1)
+    static let action = Color(actionColor)
+    static let link = Color(UIColor { traits in
+        traits.userInterfaceStyle == .dark ? UIColor(red: 0.60, green: 0.72, blue: 1, alpha: 1) : actionColor
+    })
+    static let canvas = Color(UIColor { traits in
+        traits.userInterfaceStyle == .dark
+            ? UIColor(red: 0.07, green: 0.09, blue: 0.13, alpha: 1)
+            : UIColor(red: 0.94, green: 0.96, blue: 0.99, alpha: 1)
+    })
+    static let card = Color(UIColor { traits in
+        traits.userInterfaceStyle == .dark
+            ? UIColor(red: 0.12, green: 0.15, blue: 0.21, alpha: 1)
+            : .white
+    })
+    static let border = Color(UIColor { traits in
+        traits.userInterfaceStyle == .dark
+            ? UIColor(red: 0.22, green: 0.27, blue: 0.37, alpha: 1)
+            : UIColor(red: 0.85, green: 0.89, blue: 0.95, alpha: 1)
+    })
+}
+
+private struct HomeCard: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(HomePalette.card)
+            .clipShape(RoundedRectangle(cornerRadius: 18))
+            .overlay(RoundedRectangle(cornerRadius: 18).stroke(HomePalette.border, lineWidth: 1))
+            .contentShape(Rectangle())
+    }
+}
+
 @MainActor
-private struct PairingView: View {
+private struct HomeView: View {
     private enum Modal: String, Identifiable {
-        case pairing
         case download
         case images
 
@@ -96,38 +113,25 @@ private struct PairingView: View {
     @ObservedObject var model: SyncModel
     @ObservedObject var downloads: FileReceiveModel
     @ObservedObject var imageUploads: ImageUploadModel
-    @State private var address = ""
-    @State private var token = ""
-    @State private var testResult: String?
-    @State private var testing = false
     @State private var modal: Modal?
     @State private var confirmDiscard = false
-    @State private var pairing = false
-    @State private var pairingResult: String?
-    private let timer = Timer.publish(every: 20, on: .main, in: .common).autoconnect()
 
     var body: some View {
         NavigationView {
-            Form {
-                pairingSection
-                imageUploadSection
-                receiveSection
-                syncSection
-                progressSection
-                NavigationLink(destination: DiagnosticsView(model: model)) {
-                    Text("诊断日志")
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    imageUpload
+                    fileReceive
+                    pairingLink
+                    diagnosticsLink
                 }
-                if !model.failureMessages.isEmpty {
-                    Section(header: Text("失败记录")) {
-                        ForEach(Array(model.failureMessages.enumerated()), id: \.offset) { entry in
-                            Text(entry.element)
-                        }
-                        Button("重试失败文件", action: model.retryFailures)
-                            .disabled(!model.enabled || model.running)
-                    }
-                }
+                .padding(.horizontal, 18)
+                .padding(.vertical, 16)
+                .frame(maxWidth: 520)
+                .frame(maxWidth: .infinity)
             }
-            .navigationBarTitle("截屏快传")
+            .background(HomePalette.canvas.edgesIgnoringSafeArea(.all))
+            .navigationBarTitle("截屏快传", displayMode: .large)
             .sheet(item: $modal) { purpose in
                 if purpose == .images {
                     PhotoPickerSheet { selection in
@@ -137,20 +141,12 @@ private struct PairingView: View {
                     }
                 } else {
                     PairQRCodeSheet(
-                        instruction: purpose == .pairing
-                            ? "将相机对准电脑接收端的配对二维码。"
-                            : "将相机对准电脑接收端的文件分享二维码。",
-                        unavailableMessage: purpose == .pairing
-                            ? "相机当前不可用。可返回手动填写电脑地址和配对码。"
-                            : "相机当前不可用，请检查相机后重试。"
+                        instruction: "将相机对准电脑接收端的文件分享二维码。",
+                        unavailableMessage: "相机当前不可用，请检查相机后重试。"
                     ) { value in
-                        guard modal == purpose else { return }
+                        guard modal == .download else { return }
                         modal = nil
-                        if purpose == .pairing {
-                            pairWithQRCode(value)
-                        } else {
-                            downloads.receive(scannedValue: value)
-                        }
+                        downloads.receive(scannedValue: value)
                     }
                 }
             }
@@ -162,121 +158,80 @@ private struct PairingView: View {
                     secondaryButton: .cancel()
                 )
             }
-            .onAppear {
-                guard let settings = model.settings else { return }
-                address = settings.baseURL.absoluteString
-                token = settings.token
-            }
-            .onReceive(timer) { _ in model.foregroundTick() }
         }
         .navigationViewStyle(StackNavigationViewStyle())
+        .accentColor(HomePalette.link)
     }
 
-    private var pairingSection: some View {
-        Section(
-            header: Text("配对电脑"),
-            footer: Text("让 iPhone 和电脑连接到同一局域网。扫描接收端的配对二维码，或手动填写电脑地址和配对码。")
-        ) {
+    private var canChooseImages: Bool {
+        model.settings != nil && !imageUploads.busy
+    }
+
+    private var imageUpload: some View {
+        VStack(alignment: .leading, spacing: 10) {
             Button {
-                pairingResult = nil
-                modal = .pairing
+                modal = .images
             } label: {
-                HStack {
-                    Image(systemName: "qrcode")
-                    Text("扫描电脑配对二维码")
+                HStack(spacing: 12) {
+                    Image(systemName: "photo.on.rectangle").accessibility(hidden: true)
+                    Text("选择图片上传").fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 0)
                 }
+                .font(.headline)
+                .foregroundColor(model.settings == nil ? HomePalette.link : .white)
+                .padding(.horizontal, 18)
+                .padding(.vertical, 14)
+                .frame(minHeight: 54)
+                .background(model.settings == nil ? HomePalette.canvas : HomePalette.action)
+                .clipShape(RoundedRectangle(cornerRadius: 16))
             }
+            .buttonStyle(PlainButtonStyle())
+            .disabled(!canChooseImages)
 
-            if pairing {
-                HStack {
-                    ActivityIndicator().frame(width: 24, height: 24)
-                    Text("正在配对…")
-                }
-            } else if let pairingResult {
-                Text(pairingResult).foregroundColor(.secondary)
-            }
-
-            TextField("http://192.168.1.20:8765", text: Binding(
-                get: { address },
-                set: {
-                    address = $0
-                    testResult = nil
-                }
-            ))
-            .keyboardType(.URL)
-            .textContentType(.URL)
-            .autocapitalization(.none)
-            .disableAutocorrection(true)
-            .accessibility(label: Text("电脑端地址"))
-
-            SecureField("配对码或设备令牌", text: Binding(
-                get: { token },
-                set: {
-                    token = $0
-                    testResult = nil
-                }
-            ))
-            .autocapitalization(.none)
-            .disableAutocorrection(true)
-
-            Button("保存配对") {
-                pairingResult = nil
-                model.saveSettings(address: address, token: token)
-            }
-            Button("测试连接", action: testConnection).disabled(testing)
-            if testing {
-                HStack {
-                    ActivityIndicator().frame(width: 24, height: 24)
-                    Text("正在测试连接…").foregroundColor(.secondary)
-                }
-            } else if let testResult {
-                Text(testResult).foregroundColor(.secondary)
-            }
-        }
-        .disabled(pairing)
-    }
-
-    private var imageUploadSection: some View {
-        Section(
-            header: Text("手动上传图片"),
-            footer: Text("选中的图片会发往已配对的电脑。")
-        ) {
-            Button("选择图片上传") { modal = .images }
-                .disabled(imageUploads.busy || model.settings == nil)
             if model.settings == nil {
-                Text("请先配对电脑。").foregroundColor(.secondary)
+                Text("配对电脑后可上传图片。").font(.subheadline).foregroundColor(.secondary)
             }
             if let message = imageUploads.message {
-                HStack {
+                HStack(alignment: .top, spacing: 8) {
                     if imageUploads.busy {
-                        ActivityIndicator().frame(width: 24, height: 24)
+                        ActivityIndicator().frame(width: 22, height: 22).accessibility(hidden: true)
                     }
                     Text(message).foregroundColor(.secondary)
                 }
             }
             if !imageUploads.pending.isEmpty {
-                Text("待传图片 \(imageUploads.pending.count) 张").foregroundColor(.secondary)
-                Button("重试待传图片") { imageUploads.retry(sync: model) }
-                    .disabled(imageUploads.busy || model.settings == nil)
-                Button("清除待传副本") { confirmDiscard = true }
-                    .disabled(imageUploads.busy)
+                VStack(alignment: .leading, spacing: 0) {
+                    Text("待传图片 \(imageUploads.pending.count) 张")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                    Button("重试待传图片") { imageUploads.retry(sync: model) }
+                        .frame(minHeight: 44, alignment: .leading)
+                        .disabled(!canChooseImages)
+                    Button("清除待传副本") { confirmDiscard = true }
+                        .frame(minHeight: 44, alignment: .leading)
+                        .disabled(imageUploads.busy)
+                }
             }
         }
+        .modifier(HomeCard())
     }
 
-    private var receiveSection: some View {
-        Section(
-            header: Text("从电脑接收"),
-            footer: Text("收到的文件保存在「文件」App 的「我的 iPhone／截屏快传」。")
-        ) {
+    private var fileReceive: some View {
+        VStack(alignment: .leading, spacing: 8) {
             Button {
                 modal = .download
             } label: {
-                HStack {
-                    Image(systemName: "qrcode")
-                    Text("扫码接收文件")
+                HStack(spacing: 12) {
+                    Image(systemName: "qrcode").accessibility(hidden: true)
+                    Text("扫码接收文件").fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 0)
                 }
+                .font(.headline)
+                .foregroundColor(HomePalette.link)
+                .frame(minHeight: 44)
+                .contentShape(Rectangle())
             }
+            .buttonStyle(PlainButtonStyle())
             .disabled(downloads.isReceiving)
 
             switch downloads.status {
@@ -284,7 +239,7 @@ private struct PairingView: View {
                 EmptyView()
             case .preparing:
                 HStack {
-                    ActivityIndicator().frame(width: 24, height: 24)
+                    ActivityIndicator().frame(width: 22, height: 22).accessibility(hidden: true)
                     Text("正在读取文件信息…").foregroundColor(.secondary)
                 }
             case .receiving(let name, let bytes, let total):
@@ -298,67 +253,162 @@ private struct PairingView: View {
                 }
             case .finished(let name):
                 Text("已接收 \(name)").foregroundColor(.secondary)
+                Text("文件 → 我的 iPhone → 截屏快传").font(.subheadline).foregroundColor(.secondary)
             case .failed(let message):
                 Text(message).foregroundColor(.secondary)
             }
             if downloads.canRetry {
-                Button("重试接收", action: downloads.retry)
+                Button("重试接收", action: downloads.retry).frame(minHeight: 44, alignment: .leading)
             }
         }
+        .modifier(HomeCard())
     }
 
-    private var syncSection: some View {
-        Section(
-            header: Text("自动同步"),
-            footer: Text("开启后会检查首次开启以来保存到相册的截屏和录屏。iOS 后台扫描由系统调度。需要立即同步时，请打开本应用。")
-        ) {
-            Toggle("自动上传截图和录屏", isOn: Binding(
-                get: { model.enabled },
-                set: { model.setEnabled($0) }
-            ))
-            .disabled(model.settings == nil)
-
-            if model.enabled {
-                switch model.permission {
-                case .authorized:
-                    HStack {
-                        Image(systemName: "photo.on.rectangle")
-                        Text("已获相册访问权限")
-                    }
-                    .foregroundColor(.secondary)
-                case .limited:
-                    Button("在设置中允许访问所有照片", action: openSettings)
-                case .notDetermined:
-                    Text("重新开启此开关可请求相册访问权限。")
+    private var pairingLink: some View {
+        NavigationLink(destination: PairingSettingsView(model: model)) {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: "desktopcomputer")
+                    .font(.headline)
+                    .foregroundColor(HomePalette.link)
+                    .accessibility(hidden: true)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(model.settings == nil ? "配对电脑" : "已配对电脑")
+                        .font(.headline)
+                        .foregroundColor(.primary)
+                    Text(model.settings?.baseURL.absoluteString ?? "扫码或手动填写电脑地址")
+                        .font(.subheadline)
                         .foregroundColor(.secondary)
-                case .denied:
-                    Button("在设置中开启相册访问", action: openSettings)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-
-                Button("立即扫描并上传", action: model.syncNow)
-                    .disabled(model.running)
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundColor(.secondary)
+                    .accessibility(hidden: true)
             }
+            .modifier(HomeCard())
         }
+        .buttonStyle(PlainButtonStyle())
     }
 
-    private var progressSection: some View {
-        Section(header: Text("进度")) {
-            HStack {
-                Text("已上传")
-                Spacer()
-                Text("\(model.uploadedCount)").foregroundColor(.secondary)
+    private var diagnosticsLink: some View {
+        NavigationLink(destination: DiagnosticsView(model: model)) {
+            HStack(spacing: 12) {
+                Image(systemName: "doc.text").foregroundColor(HomePalette.link).accessibility(hidden: true)
+                Text("诊断日志").foregroundColor(.primary)
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundColor(.secondary)
+                    .accessibility(hidden: true)
             }
-            HStack {
-                Text("本次待传")
-                Spacer()
-                Text("\(model.pending)").foregroundColor(.secondary)
-            }
-            HStack(alignment: .top) {
-                if model.running {
-                    ActivityIndicator().frame(width: 24, height: 24)
+            .font(.headline)
+            .modifier(HomeCard())
+        }
+        .buttonStyle(PlainButtonStyle())
+    }
+}
+
+@MainActor
+private struct PairingSettingsView: View {
+    @ObservedObject var model: SyncModel
+    @State private var address = ""
+    @State private var token = ""
+    @State private var testResult: String?
+    @State private var saveResult: String?
+    @State private var pairingResult: String?
+    @State private var testing = false
+    @State private var pairing = false
+    @State private var scanner = false
+
+    var body: some View {
+        Form {
+            Section(
+                header: Text("扫码配对"),
+                footer: Text("将 iPhone 和电脑连接到同一局域网。")
+            ) {
+                Button {
+                    pairingResult = nil
+                    scanner = true
+                } label: {
+                    HStack {
+                        Image(systemName: "qrcode").accessibility(hidden: true)
+                        Text("扫描电脑配对二维码")
+                    }
                 }
-                Text(model.lastStatus).foregroundColor(.secondary)
+                if pairing {
+                    HStack {
+                        ActivityIndicator().frame(width: 22, height: 22).accessibility(hidden: true)
+                        Text("正在配对…").foregroundColor(.secondary)
+                    }
+                } else if let pairingResult {
+                    Text(pairingResult).foregroundColor(.secondary)
+                }
             }
+            .disabled(pairing)
+
+            Section(header: Text("手动配对")) {
+                TextField("http://192.168.1.20:8765", text: Binding(
+                    get: { address },
+                    set: {
+                        address = $0
+                        testResult = nil
+                        saveResult = nil
+                    }
+                ))
+                .keyboardType(.URL)
+                .textContentType(.URL)
+                .autocapitalization(.none)
+                .disableAutocorrection(true)
+                .accessibility(label: Text("电脑端地址"))
+
+                SecureField("配对码或设备令牌", text: Binding(
+                    get: { token },
+                    set: {
+                        token = $0
+                        testResult = nil
+                        saveResult = nil
+                    }
+                ))
+                .autocapitalization(.none)
+                .disableAutocorrection(true)
+
+                Button("保存配对") {
+                    pairingResult = nil
+                    model.saveSettings(address: address, token: token)
+                    saveResult = model.pairingStatus
+                }
+                Button("测试连接", action: testConnection).disabled(testing)
+
+                if let saveResult {
+                    Text(saveResult).foregroundColor(.secondary)
+                }
+                if testing {
+                    HStack {
+                        ActivityIndicator().frame(width: 22, height: 22).accessibility(hidden: true)
+                        Text("正在测试连接…").foregroundColor(.secondary)
+                    }
+                } else if let testResult {
+                    Text(testResult).foregroundColor(.secondary)
+                }
+            }
+            .disabled(pairing)
+        }
+        .navigationBarTitle("电脑配对", displayMode: .inline)
+        .sheet(isPresented: $scanner) {
+            PairQRCodeSheet(
+                instruction: "将相机对准电脑接收端的配对二维码。",
+                unavailableMessage: "相机当前不可用。可返回手动填写电脑地址和配对码。"
+            ) { value in
+                guard scanner else { return }
+                scanner = false
+                pairWithQRCode(value)
+            }
+        }
+        .onAppear {
+            guard let settings = model.settings else { return }
+            address = settings.baseURL.absoluteString
+            token = settings.token
         }
     }
 
@@ -386,16 +436,11 @@ private struct PairingView: View {
                 address = settings.baseURL.absoluteString
                 token = settings.token
                 testResult = nil
-                pairingResult = "配对成功，电脑配置已保存。"
+                saveResult = nil
+                pairingResult = "配对成功。"
             } catch {
                 pairingResult = "配对失败。\(error.localizedDescription)"
             }
-        }
-    }
-
-    private func openSettings() {
-        if let url = URL(string: UIApplication.openSettingsURLString) {
-            UIApplication.shared.open(url)
         }
     }
 }
