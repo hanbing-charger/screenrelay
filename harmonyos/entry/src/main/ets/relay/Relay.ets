@@ -134,7 +134,7 @@ export class Relay {
         continue
       }
       try {
-        const sourceName = await this.store.stage(item.id, uri)
+        const sourceName = await this.store.stage(item.id, uri, kind === 'file')
         item.filename = selectedFileName(uri, sourceName, this.store.stagedPath(item.id), kind)
         if (this.state.endpoint !== endpoint) {
           throw new Error('配对电脑已变更，请重新发送所选文件。')
@@ -317,6 +317,10 @@ export class Relay {
         this.reject(item, '电脑报告文件记录冲突。')
         return
       case 400:
+        if (item.kind === 'video' || item.kind === 'file') {
+          this.reject(item, '电脑未接受上传请求（HTTP 400）。请更新电脑端至 1.0.0 或更高版本。')
+          return
+        }
         this.reject(item, item.kind === 'photo' ?
           '电脑拒绝图片上传请求（HTTP 400）。请确认电脑端已更新到支持图片传输的版本。' :
           '电脑拒绝了上传请求（HTTP 400）。')

@@ -80,7 +80,7 @@ func readStore(folder string) (*captureStore, error) {
 		var record capture
 		if json.Unmarshal(text, &record) != nil || !validHexID(record.ID) ||
 			file.Name() != record.ID+".json" ||
-			record.Name == "" || record.Name != sanitizeName(record.Name) ||
+			record.Name == "" || record.Name != sanitizeName(record.Name, record.Kind == fileKind) ||
 			record.ReceivedAt.IsZero() || !validKind(record.Kind) {
 			continue
 		}
@@ -236,7 +236,7 @@ func syncDirectory(dir string) {
 	}
 }
 
-func sanitizeName(name string) string {
+func sanitizeName(name string, allowLongExtension bool) string {
 	if !utf8.ValidString(name) {
 		return ""
 	}
@@ -252,13 +252,17 @@ func sanitizeName(name string) string {
 		return name
 	}
 	ext := filepath.Ext(name)
-	if len(ext) > 12 {
+	if len(ext) > 12 && !allowLongExtension {
 		return ""
+	}
+	if len(ext) > maxFilename-utf8.UTFMax {
+		// Leave room for at least the first character of the original name.
+		ext = ""
 	}
 	stem := strings.TrimSuffix(name, ext)
 	for len(stem) > maxFilename-len(ext) {
 		_, length := utf8.DecodeLastRuneInString(stem)
 		stem = stem[:len(stem)-length]
 	}
-	return stem + ext
+	return strings.TrimRight(stem+ext, " .")
 }

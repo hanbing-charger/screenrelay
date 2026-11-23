@@ -114,16 +114,15 @@ export class RelayStorage {
     return this.spoolPath + '/' + id
   }
 
-  async stage(id: string, uri: string): Promise<string> {
+  async stage(id: string, uri: string, allowEmpty: boolean): Promise<string> {
     let file: fileIo.File
     try {
-      // Read the URI granted by PhotoViewPicker directly. A full-library query
-      // is unnecessary and can fail even though the user granted this file.
+      // Read the original URI granted by the system picker directly.
       file = fileIo.openSync(uri, fileIo.OpenMode.READ_ONLY)
     } catch (error) {
       const code = (error as BusinessError).code
       throw new Error('无法读取所选文件' + (code ? '（' + code + '）' : '') +
-        '。请重新选择，云端文件请先从相册下载。')
+        '。请重新选择，云端文件请先下载到手机。')
     }
     try {
       const path = this.stagedPath(id)
@@ -132,8 +131,8 @@ export class RelayStorage {
       } catch (_) {
         throw new Error('无法复制所选文件，请检查手机的剩余存储空间。')
       }
-      if ((await fileIo.stat(path)).size <= 0) {
-        throw new Error('所选文件没有可发送的数据。请先在相册中打开原文件。')
+      if (!allowEmpty && (await fileIo.stat(path)).size <= 0) {
+        throw new Error('所选媒体没有可发送的数据。请先在相册中打开原文件。')
       }
       return file.name
     } finally {

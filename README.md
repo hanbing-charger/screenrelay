@@ -1,10 +1,10 @@
 # 截屏快传
 
-在手机和 Mac 或 Windows 之间通过局域网传文件。手机可以选择相册图片上传，也可以扫描电脑的下载码接收文件。电脑端按接收日期和文件类型保存上传的文件。
+在手机和 Mac 或 Windows 之间通过局域网传文件。手机可以选择图片、视频和普通文件上传，也可以扫描电脑的下载码接收文件。电脑端按接收日期和文件类型保存上传的文件。
 
 ## 电脑端
 
-[下载 Mac 和 Windows 接收器](https://github.com/hanbing-charger/screenrelay/releases/tag/v0.9.0)
+[下载 Mac 和 Windows 接收器](https://github.com/hanbing-charger/screenrelay/releases/tag/v1.0.0)
 
 1. 解压与电脑对应的接收器包。Apple 芯片 Mac 选 macOS-arm64，Intel Mac 选 macOS-x64。常见 Windows 电脑选 Windows-x64，ARM 版 Windows 选 Windows-arm64。
 2. Mac 双击「启动截屏快传.command」，Windows 双击「ScreenRelay.exe」。如果防火墙询问，允许在私人网络接收。构建未做商业签名或 Apple 公证，首次启动时系统可能要求在安全设置里确认来源。
@@ -15,23 +15,29 @@
 
 ## 手机端
 
-[下载 Android APK、iOS IPA 和鸿蒙 HAP](https://github.com/hanbing-charger/screenrelay/releases/tag/v0.9.0)
+[下载 Android APK、iOS IPA 和鸿蒙 HAP](https://github.com/hanbing-charger/screenrelay/releases/tag/v1.0.0)
 
-手机和电脑连同一个 Wi-Fi。在 Android、iOS 或 HarmonyOS NEXT 端点 **扫码配对**，扫描电脑面板上的二维码。二维码有效期内可给多台手机使用，同一次安装重复扫码会更新同一个配对。也可以手动填写地址和配对码，再点 **保存配对**。配对后即可选择图片或诊断日志上传。
+手机和电脑连同一个 Wi-Fi。在 Android、iOS 或 HarmonyOS NEXT 端点 **扫码配对**，扫描电脑面板上的二维码。二维码有效期内可给多台手机使用，同一次安装重复扫码会更新同一个配对。也可以手动填写地址和配对码，再点 **保存配对**。配对后即可选择图片、视频、文件或诊断日志上传。
 
 | 手机系统 | 使用方式 |
 | --- | --- |
-| Android 10 及以上 | 安装 APK，用系统文件选择器选图，可多选。 |
-| iOS 13 及以上 | 用 Xcode 打开 iOS 工程并签名安装。按系统提示允许访问局域网。iOS 13 支持单选，iOS 14 及以上支持多选。 |
-| HarmonyOS NEXT | 用 DevEco Studio 构建并签名安装。在系统相册选择图片或录屏。支持 Android APK 的早期鸿蒙机型可使用 Android 端。 |
+| Android 10 及以上 | 安装 APK，用系统选择器选图片、视频或文件，可多选。 |
+| iOS 13 及以上 | 用 Xcode 打开 iOS 工程并签名安装，按提示允许访问局域网。iOS 13 的相册入口支持单选，iOS 14 及以上支持多选。普通文件可从系统「文件」选择。 |
+| HarmonyOS NEXT | 用 DevEco Studio 构建并签名安装。相册入口支持图片和视频，文件入口打开系统文件选择器。支持 Android APK 的早期鸿蒙机型可使用 Android 端。 |
 
 各平台的构建和权限细节见源码中的 [Android](android)、[iOS](ios) 和 [HarmonyOS](harmonyos) 目录。
 
-## 手动上传图片
+## 手动上传图片、视频和文件
 
-手机和电脑使用 v0.7.0 或更新版本并配对后，在手机首页点「选择图片上传」，在系统选择器选择要发送的图片。鸿蒙端选好后，点「发送所选的文件」。电脑的「最近接收」会标注「图片」。v0.8.0 起可单独配置 **图片保存位置**，收到的图片会写入该目录的 `日期/photo`，默认使用通用接收目录。
+手机和电脑升级至 v1.0.0 并配对后，在手机首页选择「选择图片上传」「选择视频上传」或「选择文件上传」。鸿蒙端选好后，点「发送所选的文件」。电脑接收面板的「最近接收」可筛选对应类型。
 
-系统选择器授予对所选图片的读取权限。电脑支持 JPEG、PNG、HEIC、WebP、GIF、AVIF、TIFF、DNG 等格式。
+| 手机入口 | 电脑保存位置 |
+| --- | --- |
+| 选择图片上传 | 图片保存位置下的 `日期/photo`。默认跟随通用接收目录。 |
+| 选择视频上传 | 通用接收目录的 `日期/video`。 |
+| 选择文件上传 | 通用接收目录的 `日期/file`。 |
+
+视频入口支持 MP4、MOV、MKV、WebM 等格式。PDF、Word、ZIP、无扩展名文件和其他原始文件可用文件入口发送。系统选择器只授权应用读取所选项目。
 
 ## 从电脑发送文件
 

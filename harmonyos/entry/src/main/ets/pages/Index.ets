@@ -2,7 +2,7 @@ import { common } from '@kit.AbilityKit'
 import { BusinessError } from '@kit.BasicServicesKit'
 import { DownloadReceiver, exportReceived } from '../relay/Download'
 import type { ReceivedFile } from '../relay/Download'
-import { selectCaptures } from '../relay/Media'
+import { selectCaptures, selectFiles } from '../relay/Media'
 import type { MediaKind } from '../relay/Media'
 import { scanDownloadCode } from '../relay/Pairing'
 import { Relay } from '../relay/Relay'
@@ -178,15 +178,19 @@ struct Index {
   }
 
   private async pick(kind: MediaKind): Promise<void> {
+    const context = this.context
+    if (context === undefined) {
+      return
+    }
     try {
-      const uris = await selectCaptures(kind)
+      const uris = kind === 'file' ? await selectFiles(context) : await selectCaptures(kind)
       if (uris.length > 0) {
         this.selectedUris = uris
         this.selectedKind = kind
         this.selectionMessage = ''
       }
     } catch (_) {
-      this.selectionMessage = '未能取得所选文件，请返回相册重新选择。'
+      this.selectionMessage = '未能取得所选文件，请重新选择。'
     }
   }
 
@@ -236,23 +240,22 @@ struct Index {
             .enabled(this.paired && !this.busy)
             .onClick((): void => { this.action(() => this.pick('photo')) })
           Row({ space: 8 }) {
-            Button('选择录屏')
+            Button('选择视频上传')
               .layoutWeight(1)
               .height(44)
               .fontColor(ACCENT)
               .backgroundColor(SURFACE_BLUE)
               .borderRadius(12)
               .enabled(this.paired && !this.busy)
-              .onClick((): void => { this.action(() => this.pick('screen-recording')) })
-            Button('扫码接收文件')
+              .onClick((): void => { this.action(() => this.pick('video')) })
+            Button('选择文件上传')
               .layoutWeight(1)
               .height(44)
               .fontColor(ACCENT)
-              .backgroundColor(Color.White)
-              .border({ width: 1, color: BORDER })
+              .backgroundColor(SURFACE_BLUE)
               .borderRadius(12)
-              .enabled(!this.busy && this.receiver !== undefined)
-              .onClick((): void => { this.action(() => this.scanDownload()) })
+              .enabled(this.paired && !this.busy)
+              .onClick((): void => { this.action(() => this.pick('file')) })
           }
           .width('100%')
           if (this.selectedUris.length > 0) {
@@ -271,6 +274,15 @@ struct Index {
               .lineHeight(21)
               .fontColor(SUBTLE)
           }
+          Button('扫码接收文件')
+            .width('100%')
+            .height(44)
+            .fontColor(ACCENT)
+            .backgroundColor(Color.White)
+            .border({ width: 1, color: BORDER })
+            .borderRadius(12)
+            .enabled(!this.busy && this.receiver !== undefined)
+            .onClick((): void => { this.action(() => this.scanDownload()) })
           if (this.downloadMessage) {
             Text(this.downloadMessage)
               .fontSize(14)

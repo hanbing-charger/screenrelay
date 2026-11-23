@@ -27,7 +27,21 @@ export function mediaType(name: string): string {
     case 'mov': return 'video/quicktime'
     case 'webm': return 'video/webm'
     case 'mkv': return 'video/x-matroska'
-    case '3gp': return 'video/3gpp'
+    case '3gp':
+    case '3gpp': return 'video/3gpp'
+    case '3g2':
+    case '3gp2': return 'video/3gpp2'
+    case 'avi': return 'video/x-msvideo'
+    case 'mpeg':
+    case 'mpg':
+    case 'mpe':
+    case 'm2v': return 'video/mpeg'
+    case 'ts':
+    case 'mts':
+    case 'm2ts': return 'video/mp2t'
+    case 'wmv': return 'video/x-ms-wmv'
+    case 'flv': return 'video/x-flv'
+    case 'ogv': return 'video/ogg'
     default: return 'application/octet-stream'
   }
 }
@@ -44,8 +58,8 @@ function matches(bytes: Uint8Array, offset: number, signature: string): boolean 
   return true
 }
 
-function detectedExtension(bytes: Uint8Array, kind: MediaKind): string {
-  if (kind === 'screen-recording') {
+function detectedExtension(bytes: Uint8Array, video: boolean): string {
+  if (video) {
     if (matches(bytes, 4, 'ftyp')) {
       if (matches(bytes, 8, 'qt  ')) {
         return 'mov'
@@ -53,10 +67,16 @@ function detectedExtension(bytes: Uint8Array, kind: MediaKind): string {
       if (matches(bytes, 8, '3gp')) {
         return '3gp'
       }
+      if (matches(bytes, 8, '3g2')) {
+        return '3g2'
+      }
       return 'mp4'
     }
     if (matches(bytes, 0, '\x1a\x45\xdf\xa3')) {
       return 'mkv'
+    }
+    if (matches(bytes, 0, 'RIFF') && matches(bytes, 8, 'AVI ')) {
+      return 'avi'
     }
     return ''
   }
@@ -105,6 +125,10 @@ function detectedExtension(bytes: Uint8Array, kind: MediaKind): string {
   return ''
 }
 
+function validFilename(name: string): boolean {
+  return !!name && name.trim() !== '' && name !== '.' && name !== '..' && !/[\\/\x00-\x1f\x7f]/.test(name)
+}
+
 export function selectedFileName(uri: string, sourceName: string, stagedPath: string, kind: MediaKind): string {
   const uriPart = uri.split(/[?#]/)[0].split('/').pop() || ''
   let uriName = uriPart
@@ -113,10 +137,18 @@ export function selectedFileName(uri: string, sourceName: string, stagedPath: st
   } catch (_) {
     // A literal percent in a picker filename is allowed.
   }
-  const mimePrefix = kind === 'screen-recording' ? 'video/' : 'image/'
+  if (kind === 'file') {
+    for (const name of [sourceName, uriName]) {
+      if (validFilename(name)) {
+        return name
+      }
+    }
+    throw new Error('无法读取所选文件的原始文件名，请从文件管理重新选择。')
+  }
+  const video = kind === 'video' || kind === 'screen-recording'
+  const mimePrefix = video ? 'video/' : 'image/'
   for (const name of [uriName, sourceName]) {
-    if (name && !/[\\/\x00-\x1f\x7f]/.test(name) && /\.[A-Za-z0-9]+$/.test(name) &&
-      mediaType(name).startsWith(mimePrefix)) {
+    if (validFilename(name) && /\.[A-Za-z0-9]+$/.test(name) && mediaType(name).startsWith(mimePrefix)) {
       return name
     }
   }
@@ -127,13 +159,13 @@ export function selectedFileName(uri: string, sourceName: string, stagedPath: st
   try {
     const header = new ArrayBuffer(64)
     const count = fileIo.readSync(file.fd, header)
-    const extension = detectedExtension(new Uint8Array(header, 0, count), kind)
+    const extension = detectedExtension(new Uint8Array(header, 0, count), video)
     if (extension) {
-      const basename = kind === 'screen-recording' ? '录屏' : '图片'
+      const basename = video ? '视频' : '图片'
       return basename + '-' + Date.now().toString() + '.' + extension
     }
   } finally {
     fileIo.closeSync(file)
   }
-  throw new Error('无法识别所选文件的格式。请在相册中打开原文件后重试，或选择另一份文件。')
+  throw new Error('无法识别所选媒体的格式。可使用「选择文件上传」发送原文件。')
 }

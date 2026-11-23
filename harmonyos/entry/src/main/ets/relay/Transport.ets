@@ -105,7 +105,8 @@ export async function pairReceiver(endpoint: string, code: string, deviceId: str
 
 export async function sendCapture(item: UploadItem, source: string, token: string): Promise<UploadResponse> {
   const upload: FileUpload = {
-    target: item.target, filename: item.filename, kind: item.kind, type: mediaType(item.filename),
+    target: item.target, filename: item.filename, kind: item.kind,
+    type: item.kind === 'file' ? 'application/octet-stream' : mediaType(item.filename),
     uploadId: 'ohos-' + item.id
   }
   return sendFile(upload, source, token)
@@ -123,7 +124,7 @@ async function sendFile(upload: FileUpload, source: string, token: string): Prom
   const file = await fileIo.open(source, fileIo.OpenMode.READ_ONLY)
   try {
     const stat = await fileIo.stat(file.fd)
-    if (stat.size <= 0) {
+    if (stat.size <= 0 && upload.kind !== 'file') {
       throw new Error('文件尚未写入完成')
     }
     if (upload.kind === 'diagnostic' && stat.size > MAX_DIAGNOSTIC_BYTES) {
@@ -138,7 +139,7 @@ async function sendFile(upload: FileUpload, source: string, token: string): Prom
       'X-Media-Kind': upload.kind,
       'X-Upload-Id': upload.uploadId
     }
-    const body = new rcp.UploadFromFile(file.fd)
+    const body = stat.size === 0 ? new ArrayBuffer(0) : new rcp.UploadFromFile(file.fd)
     const request = new rcp.Request(upload.target + '/api/v1/uploads', 'POST', headers, body)
     const session = createSession(upload.kind === 'diagnostic' ? 30000 : LONG_TRANSFER_MS)
     try {

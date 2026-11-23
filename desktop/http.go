@@ -24,6 +24,8 @@ const (
 	uploadDuration     = 45 * time.Minute
 	uploadIdleTime     = 90 * time.Second
 	photoKind          = "photo"
+	videoKind          = "video"
+	fileKind           = "file"
 	diagnosticKind     = "diagnostic"
 	diagnosticType     = "text/plain"
 	maxDiagnosticBytes = 1 << 20
@@ -84,11 +86,12 @@ func (s *relay) upload(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "invalid pairing code")
 		return
 	}
+	kind := r.Header.Get("X-Media-Kind")
 	if r.ContentLength < 0 {
 		writeError(w, http.StatusLengthRequired, "Content-Length required")
 		return
 	}
-	if r.ContentLength == 0 {
+	if r.ContentLength == 0 && kind != fileKind {
 		writeError(w, http.StatusBadRequest, "empty capture")
 		return
 	}
@@ -97,7 +100,6 @@ func (s *relay) upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	kind := r.Header.Get("X-Media-Kind")
 	if !validKind(kind) {
 		writeError(w, http.StatusBadRequest, "unknown X-Media-Kind")
 		return
@@ -116,7 +118,7 @@ func (s *relay) upload(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	rawName, err := url.PathUnescape(r.Header.Get("X-Filename"))
-	name := sanitizeName(rawName)
+	name := sanitizeName(rawName, kind == fileKind)
 	if err != nil || name == "" {
 		writeError(w, http.StatusBadRequest, "invalid X-Filename")
 		return
@@ -175,7 +177,12 @@ func (s *relay) upload(w http.ResponseWriter, r *http.Request) {
 }
 
 func validKind(kind string) bool {
-	return kind == "screenshot" || kind == "screen-recording" || kind == photoKind || kind == diagnosticKind
+	switch kind {
+	case "screenshot", "screen-recording", photoKind, videoKind, fileKind, diagnosticKind:
+		return true
+	default:
+		return false
+	}
 }
 
 var imageTypes = map[string]string{
@@ -195,6 +202,13 @@ var recordingTypes = map[string]string{
 	".webm": "video/webm", ".mkv": "video/x-matroska", ".3gp": "video/3gpp",
 }
 
+var additionalVideoTypes = map[string]string{
+	".3gpp": "video/3gpp", ".3g2": "video/3gpp2", ".3gp2": "video/3gpp2", ".avi": "video/x-msvideo",
+	".mpeg": "video/mpeg", ".mpg": "video/mpeg", ".mpe": "video/mpeg", ".m2v": "video/mpeg",
+	".ts": "video/mp2t", ".mts": "video/mp2t", ".m2ts": "video/mp2t", ".wmv": "video/x-ms-wmv",
+	".flv": "video/x-flv", ".ogv": "video/ogg",
+}
+
 func captureMediaType(name, kind string) string {
 	ext := strings.ToLower(filepath.Ext(name))
 	switch kind {
@@ -207,6 +221,13 @@ func captureMediaType(name, kind string) string {
 		return imageTypes[ext]
 	case "screen-recording":
 		return recordingTypes[ext]
+	case videoKind:
+		if mediaType := additionalVideoTypes[ext]; mediaType != "" {
+			return mediaType
+		}
+		return recordingTypes[ext]
+	case fileKind:
+		return "application/octet-stream"
 	case diagnosticKind:
 		if ext == ".txt" {
 			return diagnosticType + "; charset=utf-8"

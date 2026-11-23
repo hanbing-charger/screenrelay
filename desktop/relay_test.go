@@ -183,6 +183,131 @@ func TestPhotoRetryAndRawDownloadAfterRestart(t *testing.T) {
 	}
 }
 
+func TestSelectedVideoUploadFormats(t *testing.T) {
+	folder := t.TempDir()
+	service := testRelay(t, folder)
+	if _, err := service.locations.changePhoto(filepath.Join(folder, "photos")); err != nil {
+		t.Fatal(err)
+	}
+	payload := []byte("original video bytes")
+	videoTypes := map[string]string{
+		".mp4": "video/mp4", ".mov": "video/quicktime", ".m4v": "video/mp4", ".webm": "video/webm",
+		".mkv": "video/x-matroska", ".3gp": "video/3gpp", ".3gpp": "video/3gpp", ".3g2": "video/3gpp2",
+		".3gp2": "video/3gpp2", ".avi": "video/x-msvideo", ".mpeg": "video/mpeg", ".mpg": "video/mpeg",
+		".mpe": "video/mpeg", ".m2v": "video/mpeg", ".ts": "video/mp2t", ".mts": "video/mp2t",
+		".M2TS": "video/mp2t", ".wmv": "video/x-ms-wmv", ".flv": "video/x-flv", ".ogv": "video/ogg",
+	}
+	for ext, contentType := range videoTypes {
+		name, id := "相册视频 10+20"+ext, "device.video"+ext
+		if upload := sendCapture(service, id, name, videoKind, payload); upload.Code != http.StatusCreated {
+			t.Fatalf("video upload %s got %d: %s", ext, upload.Code, upload.Body)
+		}
+		record, store, ok := service.locations.find(captureIDForUpload(id))
+		if !ok || store.root != folder || filepath.Base(filepath.Dir(record.path(store.root))) != videoKind || record.Name != name {
+			t.Fatalf("video %s used the wrong save location: %+v", ext, record)
+		}
+		response := localRequest(service, "/files/"+record.ID)
+		wantDisposition := "attachment"
+		if ext == ".mp4" || ext == ".mov" || ext == ".m4v" || ext == ".webm" {
+			wantDisposition = "inline"
+		}
+		if response.Code != http.StatusOK || response.Header().Get("Content-Type") != contentType ||
+			!strings.HasPrefix(response.Header().Get("Content-Disposition"), wantDisposition) || !bytes.Equal(response.Body.Bytes(), payload) {
+			t.Fatalf("unexpected video download for %s: %d, %v", ext, response.Code, response.Header())
+		}
+	}
+	if bad := sendCapture(service, "wrong-video", "file.html", videoKind, payload); bad.Code != http.StatusUnsupportedMediaType {
+		t.Fatalf("video with unsupported extension got %d", bad.Code)
+	}
+	if bad := sendCapture(service, "legacy-format", "file.avi", "screen-recording", payload); bad.Code != http.StatusUnsupportedMediaType {
+		t.Fatalf("legacy recording rules changed: %d", bad.Code)
+	}
+
+	service = testRelay(t, folder)
+	if retry := sendCapture(service, "device.video.M2TS", "相册视频 10+20.M2TS", videoKind, payload); retry.Code != http.StatusOK {
+		t.Fatalf("video retry after restart got %d: %s", retry.Code, retry.Body)
+	}
+}
+
+func TestGenericFileDownloadKeepsBytesInAnAttachment(t *testing.T) {
+	folder := t.TempDir()
+	service := testRelay(t, folder)
+	code, _ := service.pairings.invite(time.Now())
+	token := readDeviceToken(t, requestPairing(service, code, "phone-one", "test phone"), http.StatusCreated)
+	markup := []byte("<script>alert('unsafe as markup')</script>\n")
+	longStem := strings.Repeat("文", 50)
+	files := []struct {
+		id, name, savedName string
+		data                []byte
+	}{
+		{"nested", `../dir\报告:10+.html`, "_dir_报告_10+.html", markup},
+		{"image", "欺骗.png", "欺骗.png", markup},
+		{"no-extension", "说明 备份", "说明 备份", []byte{0, 0xff, 0x13}},
+		{"empty", "LICENSE", "LICENSE", nil},
+		{"long-extension", longStem + "." + strings.Repeat("x", 100), strings.Repeat("文", 24) + "." + strings.Repeat("x", 100), []byte("file")},
+		{"ext-exceeds-limit", "f." + strings.Repeat("x", 200), "f." + strings.Repeat("x", 173), []byte("file")},
+	}
+	for _, file := range files {
+		request := httptest.NewRequest(http.MethodPost, "/api/v1/uploads", bytes.NewReader(file.data))
+		request.Header.Set("Authorization", "Bearer "+token)
+		request.Header.Set("X-Media-Kind", fileKind)
+		request.Header.Set("X-Upload-Id", file.id)
+		request.Header.Set("X-Filename", url.PathEscape(file.name))
+		request.Header.Set("Content-Type", "text/html")
+		upload := httptest.NewRecorder()
+		service.phoneAPI().ServeHTTP(upload, request)
+		if upload.Code != http.StatusCreated {
+			t.Fatalf("file %s got %d: %s", file.id, upload.Code, upload.Body)
+		}
+	}
+
+	service = testRelay(t, folder)
+	status := localRequest(service, "/api/status")
+	var dashboard dashboardStatus
+	if err := json.Unmarshal(status.Body.Bytes(), &dashboard); err != nil || len(dashboard.Recent) != len(files) {
+		t.Fatalf("file history did not survive restart: %v", err)
+	}
+	for _, recent := range dashboard.Recent {
+		if recent.CanPreview || recent.Kind != fileKind {
+			t.Fatalf("generic file should never be previewable: %+v", recent)
+		}
+	}
+	for _, file := range files {
+		if retry := sendCapture(service, file.id, file.name, fileKind, file.data); retry.Code != http.StatusOK {
+			t.Fatalf("retry %s got %d: %s", file.id, retry.Code, retry.Body)
+		}
+		id := captureIDForUpload(file.id)
+		record, store, ok := service.locations.find(id)
+		if !ok || store.root != folder || filepath.Base(filepath.Dir(record.path(store.root))) != fileKind ||
+			record.Name != file.savedName || record.Size != int64(len(file.data)) {
+			t.Fatalf("unexpected stored file %s: %+v", file.id, record)
+		}
+		response := localRequest(service, "/files/"+id)
+		disposition, fields, err := mime.ParseMediaType(response.Header().Get("Content-Disposition"))
+		if response.Code != http.StatusOK || err != nil || disposition != "attachment" || fields["filename"] != file.savedName ||
+			response.Header().Get("Content-Type") != "application/octet-stream" ||
+			response.Header().Get("X-Content-Type-Options") != "nosniff" || !bytes.Equal(response.Body.Bytes(), file.data) {
+			t.Fatalf("unsafe or altered download for %s: %d, %v", file.id, response.Code, response.Header())
+		}
+	}
+	if tooLarge := sendCapture(service, "large", "large", fileKind, make([]byte, 1025)); tooLarge.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("generic file ignored receiver limit: %d", tooLarge.Code)
+	}
+	if noVideo := sendCapture(service, "empty-video", "empty.mp4", videoKind, nil); noVideo.Code != http.StatusBadRequest {
+		t.Fatalf("empty video got %d", noVideo.Code)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/uploads", strings.NewReader("missing length"))
+	request.ContentLength = -1
+	request.Header.Set("Authorization", "Bearer "+token)
+	request.Header.Set("X-Media-Kind", fileKind)
+	request.Header.Set("X-Filename", "file")
+	response := httptest.NewRecorder()
+	service.phoneAPI().ServeHTTP(response, request)
+	if response.Code != http.StatusLengthRequired {
+		t.Fatalf("file with unknown length got %d", response.Code)
+	}
+}
+
 func TestDiagnosticUploadAndDownloadAfterRestart(t *testing.T) {
 	folder := t.TempDir()
 	service := testRelay(t, folder)

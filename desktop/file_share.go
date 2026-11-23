@@ -105,7 +105,7 @@ func (s *relay) createFileShare(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "无法读取所选文件。请选择可读取的普通文件。")
 		return
 	}
-	name := sanitizeName(filepath.Base(path))
+	name := sanitizeName(filepath.Base(path), false)
 	if name == "" {
 		name = "download"
 	}
