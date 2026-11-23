@@ -20,6 +20,13 @@ const elements = {
   devicesCount: document.getElementById("devices-count"),
   devicesEmpty: document.getElementById("devices-empty"),
   deviceList: document.getElementById("device-list"),
+  devicesHeading: document.getElementById("devices-heading"),
+  deviceFeedback: document.getElementById("device-feedback"),
+  removeDeviceDialog: document.getElementById("remove-device-dialog"),
+  removeDeviceName: document.getElementById("remove-device-name"),
+  removeDeviceFeedback: document.getElementById("remove-device-feedback"),
+  cancelDeviceRemove: document.getElementById("cancel-device-remove"),
+  confirmDeviceRemove: document.getElementById("confirm-device-remove"),
   folderDialog: document.getElementById("folder-dialog"),
   folderDialogHeading: document.getElementById("folder-dialog-heading"),
   folderHelp: document.getElementById("folder-help"),
@@ -46,6 +53,7 @@ const elements = {
   fileShareSize: document.getElementById("file-share-size"),
   fileShareExpiry: document.getElementById("file-share-expiry"),
   fileCount: document.getElementById("file-count"),
+  fileFilters: document.getElementById("file-filters"),
   empty: document.getElementById("empty-state"),
   emptyTitle: document.getElementById("empty-title"),
   emptyDescription: document.getElementById("empty-description"),
@@ -95,6 +103,11 @@ const sizeFormat = new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 1 });
 let previousAddresses = "";
 let previousDevices = "";
 let previousFiles = "";
+let pairedDevices = [];
+let selectedDevice;
+let removingDevice = false;
+let recentFiles = [];
+let selectedFileKind = "all";
 let statusLoaded = false;
 let statusRequest;
 let statusTimer;
@@ -266,33 +279,93 @@ function createDeviceRow(device) {
   const name = document.createElement("p");
   name.className = "device-name";
   name.dir = "auto";
-  name.textContent = device.name || "未命名设备";
+  const label = device.name || "未命名设备";
+  name.textContent = label;
   detail.append(name);
   const date = new Date(device.pairedAt);
+  let pairedAt = "";
   if (device.pairedAt && Number.isFinite(date.getTime())) {
     const time = document.createElement("time");
     time.className = "device-time";
     time.dateTime = date.toISOString();
-    time.textContent = dateFormat.format(date);
+    pairedAt = dateFormat.format(date);
+    time.textContent = pairedAt;
     detail.append(time);
   }
-  row.append(icon, detail);
+  const remove = document.createElement("button");
+  remove.type = "button";
+  remove.className = "device-remove";
+  remove.textContent = "移除";
+  remove.setAttribute("aria-label", `移除 ${label}${pairedAt ? `，配对时间 ${pairedAt}` : ""}`);
+  remove.addEventListener("click", () => {
+    selectedDevice = device;
+    elements.removeDeviceName.textContent = label;
+    setFeedback(elements.removeDeviceFeedback, "");
+    elements.removeDeviceDialog.showModal();
+  });
+  row.append(icon, detail, remove);
   return row;
 }
 
 function updateDevices(devices) {
-  const snapshot = JSON.stringify(devices);
+  const devicesById = new Map();
+  for (const device of devices) {
+    const existing = devicesById.get(device.id);
+    if (!existing || Date.parse(device.pairedAt) >= (Date.parse(existing.pairedAt) || 0)) {
+      devicesById.set(device.id, device);
+    }
+  }
+  pairedDevices = [...devicesById.values()];
+  const snapshot = JSON.stringify(pairedDevices);
   if (snapshot === previousDevices) return;
   previousDevices = snapshot;
 
-  elements.deviceList.replaceChildren(...devices.map(createDeviceRow));
-  elements.deviceList.hidden = devices.length === 0;
-  elements.devicesEmpty.hidden = devices.length !== 0;
+  elements.deviceList.replaceChildren(...pairedDevices.map(createDeviceRow));
+  elements.deviceList.hidden = pairedDevices.length === 0;
+  elements.devicesEmpty.hidden = pairedDevices.length !== 0;
   elements.devicesEmpty.textContent = "暂无扫码配对的设备";
   elements.devicesCount.hidden = false;
-  elements.devicesCount.textContent = `${devices.length} 台`;
-  const pairedCount = `已配对 ${devices.length} 台设备`;
+  elements.devicesCount.textContent = `${pairedDevices.length} 台`;
+  const pairedCount = `已配对 ${pairedDevices.length} 台设备`;
   if (elements.pairingDevices.textContent !== pairedCount) elements.pairingDevices.textContent = pairedCount;
+}
+
+async function removePairedDevice() {
+  if (!selectedDevice || removingDevice) return;
+  const device = selectedDevice;
+  removingDevice = true;
+  elements.confirmDeviceRemove.disabled = true;
+  elements.cancelDeviceRemove.disabled = true;
+  setFeedback(elements.removeDeviceFeedback, "正在移除…");
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10000);
+  try {
+    const response = await fetch("/api/paired-devices/remove", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-ScreenRelay": "1" },
+      body: JSON.stringify({ id: device.id }),
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      const data = await response.json().catch(() => null);
+      setFeedback(elements.removeDeviceFeedback, data?.error || "暂时无法移除设备，请重试。", true);
+      return;
+    }
+    selectedDevice = undefined;
+    elements.removeDeviceDialog.close();
+    updateDevices(pairedDevices.filter((item) => item.id !== device.id));
+    elements.devicesHeading.focus();
+    setFeedback(elements.deviceFeedback, `已移除 ${device.name || "未命名设备"} 的配对`);
+    refreshStatus();
+  } catch {
+    setFeedback(elements.removeDeviceFeedback, "移除请求未完成，请重试。", true);
+    refreshStatus();
+  } finally {
+    clearTimeout(timeout);
+    removingDevice = false;
+    elements.confirmDeviceRemove.disabled = false;
+    elements.cancelDeviceRemove.disabled = false;
+  }
 }
 
 function clearPairingCode() {
@@ -553,7 +626,24 @@ function updateFiles(files) {
   const snapshot = JSON.stringify(files);
   if (snapshot === previousFiles) return;
   previousFiles = snapshot;
+  recentFiles = files;
+  renderFiles();
+}
 
+function fileFilterKind(file) {
+  return fileKindLabels.has(file.kind) ? file.kind : "other";
+}
+
+function renderFiles() {
+  const kinds = new Set(recentFiles.map(fileFilterKind));
+  if (!kinds.has(selectedFileKind)) selectedFileKind = "all";
+  elements.fileFilters.hidden = kinds.size < 2;
+  for (const filter of elements.fileFilters.querySelectorAll("button")) {
+    const kind = filter.dataset.fileKind;
+    filter.hidden = kind !== "all" && !kinds.has(kind);
+    filter.setAttribute("aria-pressed", String(kind === selectedFileKind));
+  }
+  const files = selectedFileKind === "all" ? recentFiles : recentFiles.filter((file) => fileFilterKind(file) === selectedFileKind);
   elements.files.replaceChildren(...files.map(createFileRow));
   elements.files.hidden = files.length === 0;
   elements.empty.hidden = files.length > 0;
@@ -563,7 +653,7 @@ function updateFiles(files) {
 
 function showStatus(data) {
   const addresses = Array.isArray(data.addresses) ? data.addresses.filter((address) => typeof address === "string" && address) : [];
-  const devices = Array.isArray(data.devices) ? data.devices.filter((device) => typeof device?.id === "string") : [];
+  const devices = Array.isArray(data.devices) ? data.devices.filter((device) => typeof device?.id === "string" && device.id) : [];
   const files = Array.isArray(data.recent) ? data.recent.filter((file) => typeof file?.name === "string") : [];
   const token = typeof data.token === "string" ? data.token : "";
   const folder = typeof data.folder === "string" ? data.folder : "";
@@ -700,6 +790,17 @@ elements.copyCode.addEventListener("click", async () => {
   }
 });
 elements.toggleCode.addEventListener("click", () => setCodeVisibility(elements.code.type === "password"));
+elements.fileFilters.addEventListener("click", (event) => {
+  const filter = event.target.closest("button[data-file-kind]");
+  if (!filter || selectedFileKind === filter.dataset.fileKind) return;
+  selectedFileKind = filter.dataset.fileKind;
+  renderFiles();
+});
+elements.cancelDeviceRemove.addEventListener("click", () => elements.removeDeviceDialog.close());
+elements.confirmDeviceRemove.addEventListener("click", removePairedDevice);
+elements.removeDeviceDialog.addEventListener("cancel", (event) => {
+  if (removingDevice) event.preventDefault();
+});
 
 elements.openFileShare.addEventListener("click", () => {
   if (canRedisplayFileShare() && remainingTime(fileShareCode.expiry)) {

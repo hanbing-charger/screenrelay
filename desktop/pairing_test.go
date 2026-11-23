@@ -7,6 +7,8 @@ import (
 	"image/png"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -139,5 +141,123 @@ func TestPairingInvitationIsolationAndExpiry(t *testing.T) {
 		if got := uploadWithDeviceToken(service, token, "upload"); got.Code != http.StatusUnauthorized {
 			t.Fatalf("%s authorized an upload: %d", label, got.Code)
 		}
+	}
+}
+
+func TestConcurrentPairingNormalizesUUIDOnly(t *testing.T) {
+	folder := t.TempDir()
+	service := testRelay(t, folder)
+	const lowercase = "051f4cf8-2080-4c52-88c1-904196c500f9"
+	uppercase := strings.ToUpper(lowercase)
+	code, _ := service.pairings.invite(time.Now())
+	results := make(chan *httptest.ResponseRecorder, 6)
+	for _, id := range []string{lowercase, uppercase, lowercase, uppercase, lowercase, uppercase} {
+		go func() { results <- requestPairing(service, code, id, "iPhone") }()
+	}
+	var token string
+	created := 0
+	for range cap(results) {
+		response := <-results
+		if response.Code == http.StatusCreated {
+			created++
+		} else if response.Code != http.StatusOK {
+			t.Fatalf("repeat scan got %d: %s", response.Code, response.Body)
+		}
+		received := readDeviceToken(t, response, response.Code)
+		if token != "" && token != received {
+			t.Fatal("repeat scan changed the token")
+		}
+		token = received
+	}
+	if created != 1 {
+		t.Fatalf("got %d new pairings for one phone", created)
+	}
+	for _, id := range []string{"phone-one", "PHONE-ONE"} {
+		other := readDeviceToken(t, requestPairing(service, code, id, "iPhone"), http.StatusCreated)
+		if other == token {
+			t.Fatal("distinct device with the same name shares a token")
+		}
+	}
+
+	service = testRelay(t, folder)
+	devices := service.pairings.summaries()
+	if len(devices) != 3 || devices[0].ID != lowercase {
+		t.Fatalf("unexpected device list after restart: %+v", devices)
+	}
+	code, _ = service.pairings.invite(time.Now())
+	if got := readDeviceToken(t, requestPairing(service, code, uppercase, "iPhone"), http.StatusOK); got != token {
+		t.Fatal("same device lost its token after restart")
+	}
+}
+
+func TestRemoveConsolidatedPairedDevice(t *testing.T) {
+	folder := t.TempDir()
+	path := filepath.Join(folder, "paired-devices.json")
+	const id = "32689ffc-7607-4f04-8fe0-6a418c3a2892"
+	const otherID = "921a9712-934e-44ff-8fbc-ace3fd41c55a"
+	oldest, old, newest, other := newPairingSecret(), newPairingSecret(), newPairingSecret(), newPairingSecret()
+	now := time.Now().UTC()
+	data, _ := json.Marshal([]pairedDevice{
+		{pairedDeviceSummary: pairedDeviceSummary{ID: id, Name: "iPhone", PairedAt: now}, Token: newest},
+		{pairedDeviceSummary: pairedDeviceSummary{ID: strings.ToUpper(id), Name: "iPhone", PairedAt: now.Add(-time.Hour)}, Token: oldest},
+		{pairedDeviceSummary: pairedDeviceSummary{ID: id, Name: "iPhone", PairedAt: now.Add(-time.Minute)}, Token: old},
+		{pairedDeviceSummary: pairedDeviceSummary{ID: otherID, Name: "iPhone", PairedAt: now}, Token: other},
+	})
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	service := testRelay(t, folder)
+	if devices := service.pairings.summaries(); len(devices) != 2 || devices[0].ID != id {
+		t.Fatalf("legacy entries did not normalize: %+v", devices)
+	}
+	code, _ := service.pairings.invite(time.Now())
+	updated := requestPairing(service, code, id, "我的 iPhone")
+	if token := readDeviceToken(t, updated, http.StatusOK); token != oldest {
+		t.Fatal("repeat scan did not reuse the original token")
+	}
+	service = testRelay(t, folder)
+	for _, token := range []string{oldest, old, newest, other} {
+		if !service.pairings.accepts(token) {
+			t.Fatal("valid prior token was lost during registry migration")
+		}
+	}
+
+	const route = "/api/paired-devices/remove"
+	origin := "http://" + service.dashboardHost
+	body, _ := json.Marshal(map[string]string{"id": strings.ToUpper(id)})
+	if denied := postFromDashboard(service, route, "https://other.example", body); denied.Code != http.StatusForbidden {
+		t.Fatalf("cross-origin remove got %d", denied.Code)
+	}
+	if invalid := postFromDashboard(service, route, origin, []byte(`{"id":"not/an/id"}`)); invalid.Code != http.StatusBadRequest {
+		t.Fatalf("invalid removal ID got %d", invalid.Code)
+	}
+	remote := httptest.NewRecorder()
+	service.phoneAPI().ServeHTTP(remote, httptest.NewRequest(http.MethodPost, route, bytes.NewReader(body)))
+	if remote.Code != http.StatusNotFound {
+		t.Fatalf("phone listener exposed removal: %d", remote.Code)
+	}
+
+	service.pairings.path = filepath.Join(folder, "missing", "paired-devices.json")
+	if failed := postFromDashboard(service, route, origin, body); failed.Code != http.StatusInternalServerError ||
+		!service.pairings.accepts(oldest) || len(service.pairings.summaries()) != 2 {
+		t.Fatalf("unpersisted removal did not preserve device: %d", failed.Code)
+	}
+	service.pairings.path = path
+	for range 2 {
+		if removed := postFromDashboard(service, route, origin, body); removed.Code != http.StatusNoContent {
+			t.Fatalf("removal request got %d: %s", removed.Code, removed.Body)
+		}
+	}
+	service = testRelay(t, folder)
+	if devices := service.pairings.summaries(); len(devices) != 1 || devices[0].ID != otherID {
+		t.Fatalf("wrong entries removed: %+v", devices)
+	}
+	for _, token := range []string{oldest, old, newest} {
+		if upload := uploadWithDeviceToken(service, token, "removed-device"); upload.Code != http.StatusUnauthorized {
+			t.Fatalf("removed device can still upload: %d", upload.Code)
+		}
+	}
+	if upload := uploadWithDeviceToken(service, other, "other-device"); upload.Code != http.StatusCreated {
+		t.Fatalf("unrelated device lost its token: %d", upload.Code)
 	}
 }

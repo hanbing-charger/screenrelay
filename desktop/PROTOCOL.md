@@ -2,7 +2,7 @@
 
 电脑上传服务默认监听 IPv4 TCP 8765。电脑控制台使用独立的本地端口，手机端应使用控制台显示的局域网地址。
 
-- `GET /api/v1/health` 返回 `200` 和 `{"status":"ok","version":"0.8.0"}`，用于检查接收器地址是否可达。
+- `GET /api/v1/health` 返回 `200` 和 `{"status":"ok","version":"0.9.0"}`，用于检查接收器地址是否可达。
 - `POST /api/v1/uploads` 上传原始文件字节，需指定 `Content-Length`。文件名使用 RFC 3986 UTF-8 百分号编码后放入 `X-Filename`，类型放入 `X-Media-Kind`（`screenshot`、`screen-recording`、`photo` 或 `diagnostic`），将扫码配对得到的令牌或手动配对码放入 `Authorization: Bearer <token>`。建议设置实际 `Content-Type`。
 - `photo` 用于手动发送图片。接收端按允许的图片扩展名识别文件格式并保留字节。此类型从 v0.7.0 起可用。v0.8.0 起可在电脑控制台指定图片目录，图片保存到该目录的 `日期/photo` 下，默认使用通用接收目录。
 - `diagnostic` 接收扩展名为 `.txt` 的日志，上传时使用 `Content-Type: text/plain; charset=utf-8`。单份日志最大 1 MiB，也受接收端配置的上传上限约束。电脑控制台以「诊断日志」显示，可下载原始文件。
@@ -15,7 +15,7 @@
 电脑控制台显示格式为 `screenrelay://pair?v=1&url=<RFC3986 编码的电脑地址>&code=<短期配对码>` 的二维码。二维码有效期为十分钟，期间可配对多台手机。
 
 - 手机向 `POST /api/v1/pair` 发送 UTF-8 JSON，字段为 `pairingCode`、`deviceId` 和 `deviceName`。其中 `deviceId` 是安装后持久保存的标识符，允许的字符集与 `X-Upload-Id` 相同。
-- 返回 `201` 表示新配对，`200` 表示此前已配对，两者都返回 JSON `{"token":"<设备令牌>"}`。手机保存电脑地址和设备令牌。重复发起同一设备的配对只有一条记录。
+- 返回 `201` 表示新配对，`200` 表示此前已配对，两者都返回 JSON `{"token":"<设备令牌>"}`。手机保存电脑地址和设备令牌。相同配对标识只占一条记录，UUID 格式的标识按大小写无关的方式匹配。
 - `401` 表示二维码过期或配对码有误。已配对手机的令牌在接收器重启后仍可使用。
 
 ## 电脑文件下载

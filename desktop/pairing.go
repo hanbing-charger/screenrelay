@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -24,6 +25,7 @@ import (
 const pairingDuration = 10 * time.Minute
 
 var errInvalidInvitation = errors.New("invalid or expired pairing code")
+var uuidDeviceID = regexp.MustCompile(`(?i)^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$`)
 
 type pairedDeviceSummary struct {
 	ID       string    `json:"id"`
@@ -33,7 +35,8 @@ type pairedDeviceSummary struct {
 
 type pairedDevice struct {
 	pairedDeviceSummary
-	Token string `json:"token"`
+	Token        string   `json:"token"`
+	LegacyTokens []string `json:"legacyTokens,omitempty"`
 }
 
 type devicePairing struct {
@@ -54,6 +57,18 @@ func newPairingSecret() string {
 	return base64.RawURLEncoding.EncodeToString(randBytes(32))
 }
 
+func canonicalDeviceID(id string) string {
+	if uuidDeviceID.MatchString(id) {
+		return strings.ToLower(id)
+	}
+	return id
+}
+
+func validDeviceToken(token string) bool {
+	rawToken, err := base64.RawURLEncoding.DecodeString(token)
+	return err == nil && len(rawToken) == 32
+}
+
 func loadPairings(path string) (*pairingRegistry, error) {
 	registry := &pairingRegistry{path: path, devices: make(map[string]pairedDevice)}
 	data, err := os.ReadFile(path)
@@ -68,17 +83,34 @@ func loadPairings(path string) (*pairingRegistry, error) {
 		return nil, err
 	}
 	for _, device := range stored {
-		rawToken, decodeErr := base64.RawURLEncoding.DecodeString(device.Token)
-		if !uploadIDPattern.MatchString(device.ID) || decodeErr != nil || len(rawToken) != 32 ||
+		if !uploadIDPattern.MatchString(device.ID) || !validDeviceToken(device.Token) ||
 			device.PairedAt.IsZero() || device.Name == "" {
 			return nil, errors.New("invalid paired device record")
 		}
-		if _, exists := registry.devices[device.ID]; exists {
-			return nil, errors.New("duplicate paired device identifier")
+		for _, token := range device.LegacyTokens {
+			if !validDeviceToken(token) {
+				return nil, errors.New("invalid paired device record")
+			}
+		}
+		device.ID = canonicalDeviceID(device.ID)
+		if previous, exists := registry.devices[device.ID]; exists {
+			device = mergePairedDevices(previous, device)
 		}
 		registry.devices[device.ID] = device
 	}
 	return registry, nil
+}
+
+func mergePairedDevices(first, second pairedDevice) pairedDevice {
+	if second.PairedAt.Before(first.PairedAt) {
+		first, second = second, first
+	}
+	for _, token := range append([]string{second.Token}, second.LegacyTokens...) {
+		if token != first.Token && !slices.Contains(first.LegacyTokens, token) {
+			first.LegacyTokens = append(first.LegacyTokens, token)
+		}
+	}
+	return first
 }
 
 func (p *pairingRegistry) invite(now time.Time) (string, time.Time) {
@@ -99,28 +131,50 @@ func (p *pairingRegistry) pair(request devicePairing, now time.Time) (pairedDevi
 		return pairedDevice{}, false, errInvalidInvitation
 	}
 
-	device, exists := p.devices[request.DeviceID]
+	id := canonicalDeviceID(request.DeviceID)
+	device, exists := p.devices[id]
 	if exists && device.Name == request.DeviceName {
 		return device, false, nil
 	}
 	if !exists {
 		device = pairedDevice{
-			pairedDeviceSummary: pairedDeviceSummary{ID: request.DeviceID, PairedAt: now.UTC()},
+			pairedDeviceSummary: pairedDeviceSummary{ID: id, PairedAt: now.UTC()},
 			Token:               newPairingSecret(),
 		}
 	}
 	device.Name = request.DeviceName
 	next := maps.Clone(p.devices)
 	next[device.ID] = device
-	data, err := json.Marshal(slices.Collect(maps.Values(next)))
-	if err != nil {
+	if err := p.persist(next); err != nil {
 		return pairedDevice{}, false, err
+	}
+	return device, !exists, nil
+}
+
+func (p *pairingRegistry) remove(id string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	id = canonicalDeviceID(id)
+	if _, exists := p.devices[id]; !exists {
+		return nil
+	}
+	next := maps.Clone(p.devices)
+	delete(next, id)
+	return p.persist(next)
+}
+
+// Called with mu held.
+func (p *pairingRegistry) persist(next map[string]pairedDevice) error {
+	devices := slices.AppendSeq(make([]pairedDevice, 0, len(next)), maps.Values(next))
+	data, err := json.Marshal(devices)
+	if err != nil {
+		return err
 	}
 	if err := writeAtomic(p.path, data, false); err != nil {
-		return pairedDevice{}, false, err
+		return err
 	}
 	p.devices = next
-	return device, !exists, nil
+	return nil
 }
 
 func (p *pairingRegistry) accepts(token string) bool {
@@ -130,8 +184,33 @@ func (p *pairingRegistry) accepts(token string) bool {
 		if subtle.ConstantTimeCompare([]byte(token), []byte(device.Token)) == 1 {
 			return true
 		}
+		for _, previous := range device.LegacyTokens {
+			if subtle.ConstantTimeCompare([]byte(token), []byte(previous)) == 1 {
+				return true
+			}
+		}
 	}
 	return false
+}
+
+func (s *relay) removePairedDevice(w http.ResponseWriter, r *http.Request) {
+	if !s.dashboardActionAllowed(r) {
+		writeError(w, http.StatusForbidden, "dashboard origin required")
+		return
+	}
+	var request struct {
+		ID string `json:"id"`
+	}
+	if err := readSmallJSON(w, r, &request); err != nil || !uploadIDPattern.MatchString(request.ID) {
+		writeError(w, http.StatusBadRequest, "invalid device identifier")
+		return
+	}
+	if err := s.pairings.remove(request.ID); err != nil {
+		log.Printf("移除配对设备失败 %v", err)
+		writeError(w, http.StatusInternalServerError, "无法移除配对设备")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (p *pairingRegistry) summaries() []pairedDeviceSummary {

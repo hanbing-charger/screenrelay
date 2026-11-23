@@ -249,6 +249,7 @@ func (s *relay) dashboardAPI() http.Handler {
 	}
 	mux.HandleFunc("GET /api/status", s.status)
 	mux.HandleFunc("POST /api/pairing", s.showPairingQR)
+	mux.HandleFunc("POST /api/paired-devices/remove", s.removePairedDevice)
 	mux.HandleFunc("POST /api/folder", s.changeReceiveFolder)
 	mux.HandleFunc("POST /api/folder/pick", s.pathPicker(func(ctx context.Context) (string, error) {
 		return pickReceiveFolder(ctx, s.locations.current().root)
