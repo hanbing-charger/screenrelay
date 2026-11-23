@@ -27,6 +27,7 @@ import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.ScrollView;
+import android.widget.Switch;
 import android.widget.TextView;
 
 import com.journeyapps.barcodescanner.ScanIntentResult;
@@ -48,6 +49,7 @@ public final class MainActivity extends Activity {
     private static final int DOWNLOAD_CAMERA_PERMISSION_REQUEST = 5;
     private static final int DOWNLOAD_SCAN_REQUEST = 6;
     private static final int CHOOSE_IMAGES_REQUEST = 7;
+    private static final String WAITING_FOR_AUTO_PERMISSION = "waitingForAutoPermission";
     private static final int BLUE = Color.rgb(37, 88, 221);
     private static final int INK = Color.rgb(23, 36, 62);
     private static final int SECONDARY = Color.rgb(72, 88, 113);
@@ -61,16 +63,18 @@ public final class MainActivity extends Activity {
     private Settings settings;
     private IncomingDownloads downloads;
     private ManualImageUploads imageUploads;
-    private Settings.Configuration awaitingPermission;
+    private boolean waitingForAutoPermission;
+    private boolean updatingAutomaticSwitch;
     private EditText address;
     private EditText secret;
     private TextView status;
     private TextView tracking;
     private TextView statistics;
     private TextView feedback;
-    private Button activate;
+    private Button savePairing;
     private Button scan;
-    private Button pause;
+    private Switch automaticUpload;
+    private TextView automaticFeedback;
     private Button retry;
     private Button test;
     private Button scanDownload;
@@ -93,12 +97,19 @@ public final class MainActivity extends Activity {
         settings = new Settings(this);
         downloads = IncomingDownloads.get(this);
         imageUploads = ManualImageUploads.get(this);
+        waitingForAutoPermission = state != null && state.getBoolean(WAITING_FOR_AUTO_PERMISSION);
         getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
         setContentView(makeScreen());
         Settings.Configuration saved = settings.configuration();
         address.setText(saved.origin());
         secret.setText(saved.token());
         downloads.restoreOnce();
+    }
+
+    @Override
+    protected void onSaveInstanceState(Bundle state) {
+        super.onSaveInstanceState(state);
+        state.putBoolean(WAITING_FOR_AUTO_PERMISSION, waitingForAutoPermission);
     }
 
     @Override
@@ -187,24 +198,20 @@ public final class MainActivity extends Activity {
                 InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
         labelField(pairing, "配对密钥", secret);
 
-        activate = button("开始自动上传", false);
-        activate.setOnClickListener(view -> onActivate());
-        add(pairing, activate, 18);
+        savePairing = button("保存配对", false);
+        savePairing.setOnClickListener(view -> {
+            Settings.Configuration configuration = readConfiguration();
+            if (configuration != null) {
+                savePairing(configuration, "已保存配对。");
+            }
+        });
+        add(pairing, savePairing, 18);
 
         test = button("测试连接", false);
         test.setOnClickListener(view -> onTest());
         add(pairing, test, 8);
 
-        pause = button("暂停自动上传", false);
-        pause.setOnClickListener(view -> onPauseUpload());
-        add(page, pause, 12);
-        retry = button("重试待上传和失败的文件", false);
-        retry.setOnClickListener(view -> {
-            SyncEngine.retry(this);
-            ensureRunning();
-            showFeedback("已安排重试。");
-        });
-        add(page, retry, 6);
+        add(page, makeAutomaticUploadCard(), 16);
 
         Button diagnostics = button("诊断日志", false);
         diagnostics.setOnClickListener(view -> startActivity(new Intent(this, DiagnosticActivity.class)));
@@ -213,13 +220,6 @@ public final class MainActivity extends Activity {
         add(page, text("请让手机和电脑连接同一可信 Wi-Fi，并保持电脑接收端运行。系统限制后台任务时，上传可能延迟。",
                 13, SECONDARY, false), 16);
         return scroll;
-    }
-
-    private void onActivate() {
-        Settings.Configuration configuration = readConfiguration();
-        if (configuration != null) {
-            activate(configuration);
-        }
     }
 
     private View makeImageUploadCard() {
@@ -272,15 +272,9 @@ public final class MainActivity extends Activity {
         if (!configuration.origin().isEmpty() && !configuration.token().isEmpty()) {
             return configuration;
         }
-        try {
-            configuration = Settings.Configuration.fromInput(address.getText(), secret.getText());
-            settings.saveConfiguration(configuration);
-            return configuration;
-        } catch (IllegalArgumentException missingPairing) {
-            imageFeedback = "请先在下方扫码配对，或填入电脑地址和配对密钥。";
-            refreshImageUploads();
-            return null;
-        }
+        imageFeedback = "请先在下方扫码配对，或填入电脑地址和密钥后点「保存配对」。";
+        refreshImageUploads();
+        return null;
     }
 
     private void openImagePicker() {
@@ -473,9 +467,10 @@ public final class MainActivity extends Activity {
 
     private void setPairingBusy(boolean busy) {
         pairingBusy = busy;
-        for (View control : new View[]{scan, activate, test, pause, retry, address, secret}) {
+        for (View control : new View[]{scan, savePairing, test, retry, address, secret}) {
             control.setEnabled(!busy);
         }
+        refreshAutomaticSwitch();
         refreshDownloadStatus();
         refreshImageUploads();
     }
@@ -491,28 +486,88 @@ public final class MainActivity extends Activity {
         }
         address.setText(configuration.origin());
         secret.setText(configuration.token());
-        if (!Settings.hasMediaAccess(this)) {
-            showFeedback("已配对电脑，请授权访问照片和视频后开启自动上传。");
-        }
-        activate(configuration);
+        savePairing(configuration, "已配对电脑。");
     }
 
-    private void activate(Settings.Configuration configuration) {
-        if (!Settings.hasMediaAccess(this)) {
+    private void savePairing(Settings.Configuration configuration, String message) {
+        if (!configuration.equals(settings.configuration())) {
             settings.saveConfiguration(configuration);
-            awaitingPermission = configuration;
+            settings.setStatus("");
+        }
+        imageFeedback = "";
+        showAutomaticFeedback("");
+        showFeedback(message);
+        refreshImageUploads();
+        refreshDashboard();
+    }
+
+    private View makeAutomaticUploadCard() {
+        LinearLayout automatic = card();
+        automaticUpload = new Switch(this);
+        automaticUpload.setText("自动上传截图和录屏");
+        automaticUpload.setTextColor(INK);
+        automaticUpload.setTextSize(16);
+        automaticUpload.setMinHeight(dp(48));
+        automaticUpload.setOnCheckedChangeListener((button, checked) -> {
+            if (!updatingAutomaticSwitch) {
+                changeAutomaticUpload(checked);
+            }
+        });
+        add(automatic, automaticUpload, 0);
+        automaticFeedback = text("", 14, SECONDARY, false);
+        automaticFeedback.setVisibility(View.GONE);
+        automaticFeedback.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
+        add(automatic, automaticFeedback, 6);
+        retry = button("重试待上传和失败的文件", false);
+        retry.setOnClickListener(view -> {
+            if (settings.isEnabled() && Settings.hasMediaAccess(this)) {
+                SyncEngine.retry(this);
+                ensureRunning();
+                showAutomaticFeedback("已安排重试。");
+            }
+        });
+        add(automatic, retry, 8);
+        return automatic;
+    }
+
+    private void changeAutomaticUpload(boolean checked) {
+        if (!checked) {
+            pauseAutomaticUpload();
+            return;
+        }
+        Settings.Configuration configuration = settings.configuration();
+        if (configuration.origin().isEmpty() || configuration.token().isEmpty()) {
+            showAutomaticFeedback("请先保存电脑配对，再开启自动上传。");
+            refreshAutomaticSwitch();
+            return;
+        }
+        if (!Settings.hasMediaAccess(this)) {
+            waitingForAutoPermission = true;
+            refreshAutomaticSwitch();
             requestPermissions(Settings.mediaPermissions(), MEDIA_PERMISSION_REQUEST);
         } else {
-            enable(configuration);
+            enableAutomaticUpload(configuration);
         }
     }
 
-    private void enable(Settings.Configuration configuration) {
+    private void refreshAutomaticSwitch() {
+        updatingAutomaticSwitch = true;
+        automaticUpload.setChecked(settings.isEnabled() || waitingForAutoPermission);
+        updatingAutomaticSwitch = false;
+        automaticUpload.setEnabled(!pairingBusy && !waitingForAutoPermission);
+    }
+
+    private void showAutomaticFeedback(String message) {
+        automaticFeedback.setText(message);
+        automaticFeedback.setVisibility(message.isEmpty() ? View.GONE : View.VISIBLE);
+    }
+
+    private void enableAutomaticUpload(Settings.Configuration configuration) {
         settings.enable(configuration);
         settings.setStatus("正在检查新的截屏和录屏。");
         SyncEngine.retry(this);
         ensureRunning();
-        showFeedback("自动上传已开启。");
+        showAutomaticFeedback("自动上传已开启。");
         if (Build.VERSION.SDK_INT >= 33
                 && !Settings.granted(this, Manifest.permission.POST_NOTIFICATIONS)
                 && !getPreferences(MODE_PRIVATE).getBoolean("askedNotifications", false)) {
@@ -533,11 +588,11 @@ public final class MainActivity extends Activity {
         }
     }
 
-    private void onPauseUpload() {
+    private void pauseAutomaticUpload() {
         settings.disable();
         SyncJob.cancel(this);
         stopService(new Intent(this, WatchService.class));
-        showFeedback("自动上传已暂停。恢复后可补传期间保存的截屏和录屏。");
+        showAutomaticFeedback("自动上传已暂停。恢复后可补传期间保存的截屏和录屏。");
         refreshDashboard();
     }
 
@@ -595,13 +650,18 @@ public final class MainActivity extends Activity {
             } else {
                 showScannerFeedback(download, "请在系统设置中允许使用摄像头。");
             }
-        } else if (code == MEDIA_PERMISSION_REQUEST) {
-            Settings.Configuration requested = awaitingPermission;
-            awaitingPermission = null;
+        } else if (code == MEDIA_PERMISSION_REQUEST && waitingForAutoPermission) {
+            waitingForAutoPermission = false;
             if (!Settings.hasMediaAccess(this)) {
-                showFeedback("自动发现截图和录屏需要访问所有照片和视频。可以用「选择图片上传」发送选中的照片。");
-            } else if (requested != null) {
-                enable(requested);
+                showAutomaticFeedback("自动发现截图和录屏需要访问所有照片和视频。可以用「选择图片上传」发送选中的照片。");
+                refreshDashboard();
+                return;
+            }
+            Settings.Configuration configuration = settings.configuration();
+            if (!configuration.origin().isEmpty() && !configuration.token().isEmpty()) {
+                enableAutomaticUpload(configuration);
+            } else {
+                refreshDashboard();
             }
         }
     }
@@ -629,9 +689,9 @@ public final class MainActivity extends Activity {
         statistics.setText(String.format(Locale.SIMPLIFIED_CHINESE,
                 "待上传 %d   ·   已上传 %d   ·   失败 %d",
                 counts.waiting(), counts.uploaded(), counts.failed()));
-        activate.setText(enabled ? "保存并同步" : "开始自动上传");
-        pause.setVisibility(enabled ? View.VISIBLE : View.GONE);
-        retry.setVisibility(enabled && (counts.failed() > 0 || counts.waiting() > 0) ? View.VISIBLE : View.GONE);
+        refreshAutomaticSwitch();
+        retry.setVisibility(enabled && authorized && (counts.failed() > 0 || counts.waiting() > 0)
+                ? View.VISIBLE : View.GONE);
         main.postDelayed(refresh, 3_000);
     }
 
