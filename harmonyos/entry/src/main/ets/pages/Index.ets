@@ -27,12 +27,13 @@ struct Index {
   @State private failed: number = 0
   @State private otherReceivers: number = 0
   @State private selectedUris: string[] = []
+  @State private selectionMessage: string = ''
   @State private message: string = '配对电脑后即可发送截图和录屏。'
   @State private pairingMessage: string = ''
   @State private downloadMessage: string = ''
   @State private receivedDirectory: string = ''
   @State private receivedFiles: ReceivedFile[] = []
-  private selectedKind: MediaKind = 'screenshot'
+  private selectedKind: MediaKind = 'photo'
   private relay: Relay | undefined = undefined
   private receiver: DownloadReceiver | undefined = undefined
   private context: common.UIAbilityContext | undefined = undefined
@@ -176,17 +177,28 @@ struct Index {
   }
 
   private async pick(kind: MediaKind): Promise<void> {
-    const uris = await selectCaptures(kind)
-    if (uris.length > 0) {
-      this.selectedUris = uris
-      this.selectedKind = kind
-      this.message = '已选择 ' + uris.length + ' 个文件。'
+    try {
+      const uris = await selectCaptures(kind)
+      if (uris.length > 0) {
+        this.selectedUris = uris
+        this.selectedKind = kind
+        this.selectionMessage = '已选择 ' + uris.length + ' 个文件，请点击下方按钮发送。'
+      }
+    } catch (_) {
+      this.selectionMessage = '未能取得所选文件，请返回相册重新选择。'
     }
   }
 
   private async enqueue(): Promise<void> {
-    await this.relay?.addSelected(this.selectedUris, this.selectedKind)
-    this.selectedUris = []
+    try {
+      const result = await this.relay?.addSelected(this.selectedUris, this.selectedKind)
+      if (result !== undefined) {
+        this.selectedUris = result.remaining
+        this.selectionMessage = result.message
+      }
+    } catch (error) {
+      this.selectionMessage = (error as BusinessError).message || '暂时无法发送，所选文件已保留。'
+    }
   }
 
   private async retry(): Promise<void> {
@@ -341,12 +353,12 @@ struct Index {
             .fontWeight(FontWeight.Bold)
             .fontColor(INK)
           Row({ space: 8 }) {
-            Button('选择截图')
+            Button('选择图片上传')
               .layoutWeight(1)
               .backgroundColor(BACKGROUND)
               .fontColor(ACCENT)
               .enabled(this.paired && !this.busy)
-              .onClick((): void => { this.action(() => this.pick('screenshot')) })
+              .onClick((): void => { this.action(() => this.pick('photo')) })
             Button('选择录屏')
               .layoutWeight(1)
               .backgroundColor(BACKGROUND)
@@ -355,6 +367,11 @@ struct Index {
               .onClick((): void => { this.action(() => this.pick('screen-recording')) })
           }
           .width('100%')
+          if (this.selectionMessage) {
+            Text(this.selectionMessage)
+              .fontSize(14)
+              .fontColor(SUBTLE)
+          }
           if (this.selectedUris.length > 0) {
             Button('发送所选的 ' + this.selectedUris.length + ' 个文件')
               .width('100%')

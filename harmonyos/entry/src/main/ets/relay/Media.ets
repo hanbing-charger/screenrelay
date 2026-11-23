@@ -2,7 +2,7 @@ import { common, abilityAccessCtrl, Permissions } from '@kit.AbilityKit'
 import { dataSharePredicates } from '@kit.ArkData'
 import { photoAccessHelper } from '@kit.MediaLibraryKit'
 
-export type MediaKind = 'screenshot' | 'screen-recording'
+export type MediaKind = 'screenshot' | 'screen-recording' | 'photo'
 
 export interface Capture {
   uri: string
@@ -43,23 +43,25 @@ export async function requestMediaAccess(context: common.UIAbilityContext): Prom
 export async function getNewCaptures(context: common.UIAbilityContext, since: number): Promise<Capture[]> {
   const agent = photoAccessHelper.getPhotoAccessHelper(context)
   const predicates = new dataSharePredicates.DataSharePredicates()
-  predicates.orderByDesc(photoAccessHelper.PhotoKeys.DATE_ADDED_MS)
+  predicates.orderByDesc(photoAccessHelper.PhotoKeys.DATE_ADDED)
   const options: photoAccessHelper.FetchOptions = {
-    fetchColumns: [photoAccessHelper.PhotoKeys.DATE_ADDED_MS],
+    fetchColumns: [photoAccessHelper.PhotoKeys.DATE_ADDED, photoAccessHelper.PhotoKeys.DATE_ADDED_MS],
     predicates: predicates
   }
   const result = await agent.getAssets(options)
   try {
     const captures: Capture[] = []
     const count = result.getCount()
+    const firstSecond = Math.floor(since / 1000)
     for (let index = 0; index < count; index++) {
       const asset = await result.getObjectByPosition(index)
-      const added = asset.get(photoAccessHelper.PhotoKeys.DATE_ADDED_MS)
-      if (typeof added !== 'number') {
-        continue
-      }
-      if (added < since) {
+      const addedSecond = asset.get(photoAccessHelper.PhotoKeys.DATE_ADDED)
+      if (typeof addedSecond === 'number' && addedSecond < firstSecond) {
         break
+      }
+      const added = asset.get(photoAccessHelper.PhotoKeys.DATE_ADDED_MS)
+      if (typeof added !== 'number' || added < since) {
+        continue
       }
       const kind = captureKind(asset.displayName, asset.photoType)
       if (kind !== undefined) {
@@ -74,30 +76,9 @@ export async function getNewCaptures(context: common.UIAbilityContext, since: nu
 
 export async function selectCaptures(kind: MediaKind): Promise<string[]> {
   const options = new photoAccessHelper.PhotoSelectOptions()
-  options.MIMEType = kind === 'screenshot' ?
-    photoAccessHelper.PhotoViewMIMETypes.IMAGE_TYPE : photoAccessHelper.PhotoViewMIMETypes.VIDEO_TYPE
+  options.MIMEType = kind === 'screen-recording' ?
+    photoAccessHelper.PhotoViewMIMETypes.VIDEO_TYPE : photoAccessHelper.PhotoViewMIMETypes.IMAGE_TYPE
   options.maxSelectNumber = 25
   const result = await new photoAccessHelper.PhotoViewPicker().select(options)
   return result.photoUris
-}
-
-export async function getSelectedCapture(context: common.UIAbilityContext, uri: string,
-  kind: MediaKind): Promise<Capture> {
-  const agent = photoAccessHelper.getPhotoAccessHelper(context)
-  const predicates = new dataSharePredicates.DataSharePredicates()
-  predicates.equalTo(photoAccessHelper.PhotoKeys.URI, uri)
-  const options: photoAccessHelper.FetchOptions = {
-    fetchColumns: [],
-    predicates: predicates
-  }
-  const result = await agent.getAssets(options)
-  try {
-    if (result.getCount() === 0) {
-      throw new Error('选中的文件已无法访问')
-    }
-    const asset = await result.getFirstObject()
-    return { uri: uri, filename: asset.displayName, kind: kind }
-  } finally {
-    result.close()
-  }
 }

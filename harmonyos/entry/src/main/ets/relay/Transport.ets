@@ -1,6 +1,7 @@
 import { url } from '@kit.ArkTS'
 import { fileIo } from '@kit.CoreFileKit'
 import { rcp } from '@kit.RemoteCommunicationKit'
+import { mediaType } from './MediaFormat'
 import type { UploadItem } from './Storage'
 
 const LONG_TRANSFER_MS = 30 * 60 * 1000
@@ -57,24 +58,6 @@ function filenameHeader(name: string): string {
   return encodeURIComponent(name).replace(/[!'()*]/g, (value: string): string => {
     return '%' + value.charCodeAt(0).toString(16).toUpperCase()
   })
-}
-
-function mediaType(name: string): string {
-  const extension = name.slice(name.lastIndexOf('.') + 1).toLowerCase()
-  switch (extension) {
-    case 'png': return 'image/png'
-    case 'jpg':
-    case 'jpeg': return 'image/jpeg'
-    case 'heic': return 'image/heic'
-    case 'heif': return 'image/heif'
-    case 'webp': return 'image/webp'
-    case 'gif': return 'image/gif'
-    case 'mp4':
-    case 'm4v': return 'video/mp4'
-    case 'mov': return 'video/quicktime'
-    case 'webm': return 'video/webm'
-    default: return 'application/octet-stream'
-  }
 }
 
 export async function checkReceiver(endpoint: string): Promise<boolean> {

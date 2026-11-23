@@ -1,8 +1,9 @@
 import { common } from '@kit.AbilityKit'
 import { util } from '@kit.ArkTS'
 import { BusinessError, deviceInfo } from '@kit.BasicServicesKit'
-import { captureKey, getNewCaptures, getSelectedCapture, requestMediaAccess } from './Media'
+import { captureKey, getNewCaptures, requestMediaAccess } from './Media'
 import type { Capture, MediaKind } from './Media'
+import { selectedFileName } from './MediaFormat'
 import { scanPairingCode } from './Pairing'
 import { RelayStorage } from './Storage'
 import type { SavedState, UploadItem } from './Storage'
@@ -17,6 +18,11 @@ export interface RelayStatus {
   sent: number
   failed: number
   otherReceivers: number
+  message: string
+}
+
+export interface SelectedResult {
+  remaining: string[]
   message: string
 }
 
@@ -134,42 +140,56 @@ export class Relay {
     this.notify('已暂停发现新文件，队列中的文件会继续发送。')
   }
 
-  async addSelected(uris: string[], kind: MediaKind): Promise<void> {
+  async addSelected(uris: string[], kind: MediaKind): Promise<SelectedResult> {
     const endpoint = this.requireReceiver()
     let added = 0
-    let failed = 0
+    let skipped = 0
+    let failure = ''
+    const remaining: string[] = []
     for (const uri of uris) {
       if (this.state.endpoint !== endpoint) {
-        break
+        remaining.push(uri)
+        failure = '配对电脑已变更，请重新发送所选文件。'
+        continue
+      }
+      const item = this.newItem(endpoint, { uri: uri, filename: '', kind: kind }, true)
+      if (this.contains(endpoint, item.key)) {
+        skipped += 1
+        continue
       }
       try {
-        const capture = await getSelectedCapture(this.context, uri, kind)
-        if (this.contains(endpoint, captureKey(capture.uri))) {
-          continue
+        const sourceName = await this.store.stage(item.id, uri)
+        item.filename = selectedFileName(uri, sourceName, this.store.stagedPath(item.id), kind)
+        if (this.state.endpoint !== endpoint) {
+          throw new Error('配对电脑已变更，请重新发送所选文件。')
         }
-        const item = this.newItem(endpoint, capture, true)
-        await this.store.stage(item.id, capture.uri)
-        if (this.state.endpoint !== endpoint || this.contains(endpoint, item.key)) {
+        if (this.contains(endpoint, item.key)) {
           this.store.removeStaged(item.id)
+          skipped += 1
           continue
         }
         try {
           this.append([item])
         } catch (_) {
-          this.store.removeStaged(item.id)
           throw new Error('无法保存发送队列')
         }
         added += 1
-      } catch (_) {
-        failed += 1
+      } catch (error) {
+        this.store.removeStaged(item.id)
+        remaining.push(uri)
+        failure = (error as BusinessError).message || '无法读取或保存所选文件。'
       }
     }
-    if (failed === 0) {
-      this.notify(added > 0 ? '已加入 ' + added + ' 个文件。' : '选中的文件已在传输记录中。')
-    } else {
-      this.notify('已加入 ' + added + ' 个文件。另有 ' + failed + ' 个文件无法读取或保存。')
+    let message = '已加入 ' + added + ' 个文件，应用将继续发送。'
+    if (skipped > 0) {
+      message += skipped + ' 个已在传输记录中。'
     }
+    if (remaining.length > 0) {
+      message += remaining.length + ' 个未加入队列。' + failure
+    }
+    this.notify(message)
     this.run()
+    return { remaining: remaining, message: message }
   }
 
   retry(): void {
@@ -353,8 +373,15 @@ export class Relay {
         this.reject(item, '电脑报告文件记录冲突。')
         return
       case 400:
+        this.reject(item, item.kind === 'photo' ?
+          '电脑拒绝图片上传请求（HTTP 400）。请确认电脑端已更新到支持图片传输的版本。' :
+          '电脑拒绝了上传请求（HTTP 400）。')
+        return
       case 415:
-        this.reject(item, '电脑无法接收此文件格式（HTTP ' + response.status + '）。')
+        this.reject(item, '电脑无法接收此文件格式（HTTP 415）。请更新电脑端或选择其他格式。')
+        return
+      case 411:
+        this.reject(item, '电脑未收到文件长度（HTTP 411），请重新选择原文件后发送。')
         return
       case 429:
       case 503:
