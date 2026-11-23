@@ -219,7 +219,7 @@ private struct PairingView: View {
             .autocapitalization(.none)
             .disableAutocorrection(true)
 
-            Button("保存配置") {
+            Button("保存配对") {
                 pairingResult = nil
                 model.saveSettings(address: address, token: token)
             }
@@ -310,31 +310,34 @@ private struct PairingView: View {
     private var syncSection: some View {
         Section(
             header: Text("自动同步"),
-            footer: Text("首次开启后，自动同步此后保存到相册的截屏和录屏。iOS 后台扫描由系统调度。需要立即同步时，请打开本应用。")
+            footer: Text("开启后会检查首次开启以来保存到相册的截屏和录屏。iOS 后台扫描由系统调度。需要立即同步时，请打开本应用。")
         ) {
-            Toggle("自动上传", isOn: Binding(
+            Toggle("自动上传截图和录屏", isOn: Binding(
                 get: { model.enabled },
                 set: { model.setEnabled($0) }
             ))
             .disabled(model.settings == nil)
 
-            switch model.permission {
-            case .authorized:
-                HStack {
-                    Image(systemName: "photo.on.rectangle")
-                    Text("已获相册访问权限")
+            if model.enabled {
+                switch model.permission {
+                case .authorized:
+                    HStack {
+                        Image(systemName: "photo.on.rectangle")
+                        Text("已获相册访问权限")
+                    }
+                    .foregroundColor(.secondary)
+                case .limited:
+                    Button("在设置中允许访问所有照片", action: openSettings)
+                case .notDetermined:
+                    Text("重新开启此开关可请求相册访问权限。")
+                        .foregroundColor(.secondary)
+                case .denied:
+                    Button("在设置中开启相册访问", action: openSettings)
                 }
-                .foregroundColor(.secondary)
-            case .limited:
-                Button("在设置中允许访问所有照片", action: openSettings)
-            case .notDetermined:
-                Button("允许读取相册") { Task { await model.requestPermission() } }
-            case .denied:
-                Button("在设置中开启相册访问", action: openSettings)
-            }
 
-            Button("立即扫描并上传", action: model.syncNow)
-                .disabled(!model.enabled || model.running)
+                Button("立即扫描并上传", action: model.syncNow)
+                    .disabled(model.running)
+            }
         }
     }
 

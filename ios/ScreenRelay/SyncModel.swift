@@ -67,7 +67,7 @@ final class SyncModel: ObservableObject {
             try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
             loaded = true
             if state.settings != nil {
-                lastStatus = "已保存电脑配置。"
+                lastStatus = "已保存配对。"
             }
         } catch {
             lastStatus = "无法打开本机同步记录。\(error.localizedDescription)"
@@ -112,7 +112,7 @@ final class SyncModel: ObservableObject {
 
     private func applySettings(_ nextSettings: ReceiverSettings) throws {
         guard nextSettings != settings else {
-            lastStatus = "已保存电脑配置。"
+            lastStatus = "已保存配对。"
             return
         }
         var next = state
@@ -121,8 +121,8 @@ final class SyncModel: ObservableObject {
         try save(next)
         scanTask?.cancel()
         retryAfter = nil
-        lastStatus = "已保存电脑配置。"
-        startScan()
+        lastStatus = "已保存配对。"
+        if enabled { startScan() }
     }
 
     func testSettings(address: String, token: String) async -> String {
@@ -147,7 +147,7 @@ final class SyncModel: ObservableObject {
 
     func setEnabled(_ enabled: Bool) {
         load()
-        guard loaded, state.settings != nil else { return }
+        guard loaded, state.settings != nil, state.enabled != enabled else { return }
         do {
             var next = state
             next.enabled = enabled
@@ -155,11 +155,12 @@ final class SyncModel: ObservableObject {
                 next.captureFrom = Date()
             }
             try save(next)
+            refreshPermission()
             if enabled {
                 retryAfter = nil
                 scheduleBackground()
                 if permission == .notDetermined {
-                    Task { await requestPermission() }
+                    Task { await requestAutomaticUploadPermission() }
                 } else {
                     startScan()
                 }
@@ -173,7 +174,8 @@ final class SyncModel: ObservableObject {
         }
     }
 
-    func requestPermission() async {
+    private func requestAutomaticUploadPermission() async {
+        guard enabled, permission == .notDetermined else { return }
         await LibraryPermission.request()
         refreshPermission()
         startScan()
@@ -181,7 +183,7 @@ final class SyncModel: ObservableObject {
 
     private func refreshPermission() {
         permission = LibraryPermission.current()
-        let canRead = permission == .authorized || permission == .limited
+        let canRead = enabled && (permission == .authorized || permission == .limited)
         if canRead && !observing {
             PHPhotoLibrary.shared().register(observer)
             observing = true
