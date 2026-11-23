@@ -83,7 +83,8 @@ func TestUploadAndReplayAfterRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	if configuration.Token != service.token || len(configuration.Recent) != 2 ||
-		configuration.Recent[0].Kind != "screen-recording" || configuration.Recent[1].Name != name {
+		configuration.Recent[0].Kind != "screen-recording" || configuration.Recent[1].Name != name ||
+		!configuration.Recent[1].CanPreview {
 		t.Fatalf("unexpected dashboard status: %+v", configuration)
 	}
 	item := configuration.Recent[1]
@@ -107,6 +108,78 @@ func TestUploadAndReplayAfterRestart(t *testing.T) {
 	}
 	if retry := sendCapture(service, "device.capture-1", name, "screenshot", payload); retry.Code != http.StatusCreated {
 		t.Fatalf("retry for removed file returned %d", retry.Code)
+	}
+}
+
+func TestPhotoUploadFormats(t *testing.T) {
+	service := testRelay(t, t.TempDir())
+	for _, tc := range []struct{ extension, contentType string }{
+		{".jpg", "image/jpeg"}, {".JPEG", "image/jpeg"}, {".jpe", "image/jpeg"}, {".jfif", "image/jpeg"},
+		{".png", "image/png"}, {".webp", "image/webp"}, {".gif", "image/gif"}, {".avif", "image/avif"},
+		{".heic", "image/heic"}, {".heif", "image/heif"}, {".hif", "image/heif"},
+		{".heics", "image/heic-sequence"}, {".heifs", "image/heif-sequence"},
+		{".bmp", "image/bmp"}, {".jxl", "image/jxl"}, {".tif", "image/tiff"}, {".tiff", "image/tiff"},
+		{".DNG", "image/x-adobe-dng"},
+	} {
+		t.Run(tc.extension, func(t *testing.T) {
+			name := "相册照片 1" + tc.extension
+			id := "selected-photo" + tc.extension
+			payload := []byte("original photo bytes")
+			if upload := sendCapture(service, id, name, photoKind, payload); upload.Code != http.StatusCreated {
+				t.Fatalf("upload got %d: %s", upload.Code, upload.Body)
+			}
+			download := localRequest(service, "/files/"+captureIDForUpload(id)+"?download=1")
+			if download.Code != http.StatusOK || download.Header().Get("Content-Type") != tc.contentType ||
+				!bytes.Equal(download.Body.Bytes(), payload) {
+				t.Fatalf("unexpected download: %d, %v, %q", download.Code, download.Header(), download.Body)
+			}
+		})
+	}
+	for _, tc := range []struct{ kind, filename string }{
+		{photoKind, "album.svg"}, {photoKind, "album.jpg.html"}, {photoKind, "album"}, {photoKind, "album.mp4"},
+		{"screenshot", "album.dng"}, {"screen-recording", "album.jpg"},
+	} {
+		if response := sendCapture(service, "unsupported", tc.filename, tc.kind, []byte("test")); response.Code != http.StatusUnsupportedMediaType {
+			t.Errorf("%s as %s got %d: %s", tc.filename, tc.kind, response.Code, response.Body)
+		}
+	}
+}
+
+func TestPhotoRetryAndRawDownloadAfterRestart(t *testing.T) {
+	folder := t.TempDir()
+	service := testRelay(t, folder)
+	const name, id = "相册照片 10+20.DNG", "device.photo-1"
+	payload := []byte{0x49, 0x49, 0x2a, 0x00, 0x08}
+	if response := sendCapture(service, id, name, photoKind, payload); response.Code != http.StatusCreated {
+		t.Fatalf("upload got %d: %s", response.Code, response.Body)
+	}
+
+	service = testRelay(t, folder)
+	if response := sendCapture(service, id, name, photoKind, payload); response.Code != http.StatusOK {
+		t.Fatalf("retry got %d: %s", response.Code, response.Body)
+	}
+	records := service.locations.recent(2)
+	if len(records) != 1 || records[0].Kind != photoKind || records[0].Name != name {
+		t.Fatalf("unexpected history: %+v", records)
+	}
+	if stored := records[0].path(folder); filepath.Dir(stored) != filepath.Join(folder, records[0].ReceivedAt.Format(time.DateOnly), photoKind) {
+		t.Fatalf("unexpected photo path: %q", stored)
+	}
+	status := localRequest(service, "/api/status")
+	var dashboard dashboardStatus
+	if err := json.Unmarshal(status.Body.Bytes(), &dashboard); err != nil {
+		t.Fatal(err)
+	}
+	if len(dashboard.Recent) != 1 || dashboard.Recent[0].Kind != photoKind || dashboard.Recent[0].Name != name ||
+		dashboard.Recent[0].CanPreview {
+		t.Fatalf("unexpected dashboard photo: %+v", dashboard.Recent)
+	}
+	response := localRequest(service, dashboard.Recent[0].URL)
+	disposition, params, err := mime.ParseMediaType(response.Header().Get("Content-Disposition"))
+	if response.Code != http.StatusOK || err != nil || disposition != "attachment" || params["filename"] != name ||
+		response.Header().Get("Content-Type") != "image/x-adobe-dng" ||
+		response.Header().Get("X-Content-Type-Options") != "nosniff" || !bytes.Equal(response.Body.Bytes(), payload) {
+		t.Fatalf("unexpected raw photo download: %d, %v, %q", response.Code, response.Header(), response.Body)
 	}
 }
 

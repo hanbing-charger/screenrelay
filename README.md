@@ -4,7 +4,7 @@
 
 ## 电脑端
 
-[下载 Mac 和 Windows 接收器](https://github.com/hanbing-charger/screenrelay/releases/tag/v0.6.0)
+[下载 Mac 和 Windows 接收器](https://github.com/hanbing-charger/screenrelay/releases/tag/v0.7.0)
 
 1. 解压与电脑对应的接收器包。Apple 芯片 Mac 选 macOS-arm64，Intel Mac 选 macOS-x64。常见 Windows 电脑选 Windows-x64，ARM 版 Windows 选 Windows-arm64。
 2. Mac 双击「启动截屏快传.command」，Windows 双击「ScreenRelay.exe」。如果防火墙询问，允许在私人网络接收。构建未做商业签名或 Apple 公证，首次启动时系统可能要求在安全设置里确认来源。
@@ -14,7 +14,7 @@
 
 ## 手机端
 
-[下载 Android APK、iOS IPA 和鸿蒙 HAP](https://github.com/hanbing-charger/screenrelay/releases/tag/v0.6.0)
+[下载 Android APK、iOS IPA 和鸿蒙 HAP](https://github.com/hanbing-charger/screenrelay/releases/tag/v0.7.0)
 
 手机和电脑连同一个 Wi-Fi。在 Android、iOS 或 HarmonyOS NEXT 端点**扫码配对**，扫描电脑面板上的二维码。二维码有效期内可给多台手机使用，每台手机的配对会单独保存，电脑面板会列出已配对设备。也可以手动填写地址和配对码。授予所需权限并开启同步后，先截一张图或录一段视频验证。截图和录屏需要先保存到系统相册。自动同步从首次开启时开始收集。鸿蒙应用可手动选择相册中的文件。
 
@@ -25,6 +25,12 @@
 | HarmonyOS NEXT | 用 DevEco Studio 构建 ArkTS 工程。自动扫描依赖华为的完整图片和视频读取权限审批与用户授权。获得权限后可在应用运行期间自动发现并补传。默认构建可手动从系统相册选择文件。支持 Android APK 的早期鸿蒙机型可使用 Android 端。 |
 
 各平台的构建和权限细节见源码中的 [Android](android)、[iOS](ios) 和 [HarmonyOS](harmonyos) 目录。
+
+## 手动上传图片
+
+手机和电脑都升级至 v0.7.0 并配对后，在手机首页点「选择图片上传」，在系统相册选择要发送的图片。选图后应用读取所选文件并发送。电脑的「最近接收」会标注「图片」，文件保存在当前接收目录的 `日期/photo` 下。
+
+手动选图可在暂停自动上传时使用。系统只需授权读取所选的图片。电脑支持 JPEG、PNG、HEIC、WebP、GIF、AVIF、TIFF、DNG 等格式。
 
 ## 从电脑发送文件
 

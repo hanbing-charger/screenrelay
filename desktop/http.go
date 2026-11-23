@@ -23,6 +23,7 @@ import (
 const (
 	uploadDuration     = 45 * time.Minute
 	uploadIdleTime     = 90 * time.Second
+	photoKind          = "photo"
 	diagnosticKind     = "diagnostic"
 	diagnosticType     = "text/plain"
 	maxDiagnosticBytes = 1 << 20
@@ -169,14 +170,19 @@ func (s *relay) upload(w http.ResponseWriter, r *http.Request) {
 }
 
 func validKind(kind string) bool {
-	return kind == "screenshot" || kind == "screen-recording" || kind == diagnosticKind
+	return kind == "screenshot" || kind == "screen-recording" || kind == photoKind || kind == diagnosticKind
 }
 
-var screenshotTypes = map[string]string{
+var imageTypes = map[string]string{
 	".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
 	".webp": "image/webp", ".heic": "image/heic", ".heif": "image/heif",
 	".avif": "image/avif", ".gif": "image/gif", ".bmp": "image/bmp",
 	".jxl": "image/jxl", ".tif": "image/tiff", ".tiff": "image/tiff",
+}
+
+var additionalPhotoTypes = map[string]string{
+	".jpe": "image/jpeg", ".jfif": "image/jpeg", ".hif": "image/heif",
+	".heics": "image/heic-sequence", ".heifs": "image/heif-sequence", ".dng": "image/x-adobe-dng",
 }
 
 var recordingTypes = map[string]string{
@@ -188,7 +194,12 @@ func captureMediaType(name, kind string) string {
 	ext := strings.ToLower(filepath.Ext(name))
 	switch kind {
 	case "screenshot":
-		return screenshotTypes[ext]
+		return imageTypes[ext]
+	case photoKind:
+		if mediaType := additionalPhotoTypes[ext]; mediaType != "" {
+			return mediaType
+		}
+		return imageTypes[ext]
 	case "screen-recording":
 		return recordingTypes[ext]
 	case diagnosticKind:
@@ -205,6 +216,7 @@ type recentFile struct {
 	Size       int64     `json:"size"`
 	ReceivedAt time.Time `json:"receivedAt"`
 	URL        string    `json:"url"`
+	CanPreview bool      `json:"canPreview"`
 }
 
 type dashboardStatus struct {
@@ -324,12 +336,23 @@ func (s *relay) status(w http.ResponseWriter, r *http.Request) {
 		recent = append(recent, recentFile{
 			Name: record.Name, Kind: record.Kind, Size: record.Size,
 			ReceivedAt: record.ReceivedAt, URL: "/files/" + record.ID,
+			CanPreview: canPreviewMedia(captureMediaType(record.Name, record.Kind)),
 		})
 	}
 	writeJSON(w, http.StatusOK, dashboardStatus{
 		Version: version, Listening: true, Addresses: advertiseAddresses(s.listening, s.scheme),
 		Token: s.token, Folder: s.locations.current().root, Recent: recent, Devices: s.pairings.summaries(),
 	})
+}
+
+func canPreviewMedia(mediaType string) bool {
+	switch mediaType {
+	case "image/png", "image/jpeg", "image/gif", "image/webp", "image/avif",
+		"video/mp4", "video/quicktime", "video/webm":
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *relay) serveCapture(w http.ResponseWriter, r *http.Request) {
@@ -347,12 +370,8 @@ func (s *relay) serveCapture(w http.ResponseWriter, r *http.Request) {
 
 	mediaType := captureMediaType(record.Name, record.Kind)
 	disposition := "attachment"
-	switch mediaType {
-	case "image/png", "image/jpeg", "image/gif", "image/webp", "image/avif",
-		"video/mp4", "video/quicktime", "video/webm":
-		if r.URL.Query().Get("download") != "1" {
-			disposition = "inline"
-		}
+	if canPreviewMedia(mediaType) && r.URL.Query().Get("download") != "1" {
+		disposition = "inline"
 	}
 	if mediaType == "" {
 		mediaType = "application/octet-stream"

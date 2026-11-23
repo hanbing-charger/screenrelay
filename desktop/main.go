@@ -24,7 +24,7 @@ import (
 	"time"
 )
 
-const version = "0.6.0"
+const version = "0.7.0"
 
 //go:embed ui/index.html ui/style.css ui/app.js
 var dashboard embed.FS

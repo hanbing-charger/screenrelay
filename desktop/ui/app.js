@@ -425,6 +425,7 @@ async function requestFileShare(url, payload) {
 
 const fileKindLabels = new Map([
   ["screenshot", "截图"],
+  ["photo", "图片"],
   ["screen-recording", "录屏"],
   ["diagnostic", "诊断日志"],
 ]);
@@ -471,7 +472,7 @@ function createFileRow(file) {
   if (typeof file.url === "string" && /^\/files\/[a-zA-Z0-9._-]+$/.test(file.url)) {
     const actions = document.createElement("div");
     actions.className = "file-actions";
-    if (kind !== "diagnostic") {
+    if (file.canPreview) {
       const view = document.createElement("a");
       view.href = file.url;
       view.target = "_blank";
@@ -493,7 +494,7 @@ function createFileRow(file) {
 
 function updateFiles(files) {
   elements.emptyTitle.textContent = "暂无接收记录";
-  elements.emptyDescription.textContent = "手机上传的截图、录屏和诊断日志会显示在这里。";
+  elements.emptyDescription.textContent = "手机上传的图片、截图、录屏和诊断日志会显示在这里。";
   const snapshot = JSON.stringify(files);
   if (snapshot === previousFiles) return;
   previousFiles = snapshot;
