@@ -1,8 +1,8 @@
 import { common } from '@kit.AbilityKit'
 import { util } from '@kit.ArkTS'
 import { BusinessError, deviceInfo } from '@kit.BasicServicesKit'
-import { captureKey, getNewCaptures, requestMediaAccess } from './Media'
-import type { Capture, MediaKind } from './Media'
+import { captureKey } from './Media'
+import type { MediaKind } from './Media'
 import { selectedFileName } from './MediaFormat'
 import { scanPairingCode } from './Pairing'
 import { RelayStorage } from './Storage'
@@ -13,7 +13,6 @@ import type { UploadResponse } from './Transport'
 export interface RelayStatus {
   endpoint: string
   token: string
-  detecting: boolean
   pending: number
   sent: number
   failed: number
@@ -26,7 +25,7 @@ export interface SelectedResult {
   message: string
 }
 
-const SCAN_INTERVAL_MS = 6000
+const RETRY_INTERVAL_MS = 6000
 const MAX_RETRY_DELAY_MS = 5 * 60 * 1000
 
 export class Relay {
@@ -39,7 +38,7 @@ export class Relay {
   private running: boolean = false
   private blockedEndpoint: string = ''
   private receiverRetryAt: number = 0
-  private message: string = '配对电脑后即可发送截图和录屏。'
+  private message: string = ''
 
   constructor(context: common.UIAbilityContext, onChange: (status: RelayStatus) => void) {
     this.context = context
@@ -69,7 +68,6 @@ export class Relay {
     return {
       endpoint: this.state.endpoint,
       token: this.state.token,
-      detecting: this.state.autoSince > 0,
       pending: pending,
       sent: sent,
       failed: failed,
@@ -81,7 +79,7 @@ export class Relay {
   setForeground(value: boolean): void {
     this.foreground = value
     if (value && this.timer < 0) {
-      this.timer = setInterval(() => { this.run() }, SCAN_INTERVAL_MS)
+      this.timer = setInterval(() => { this.run() }, RETRY_INTERVAL_MS)
       this.run()
     }
     if (!value && this.timer >= 0) {
@@ -96,11 +94,10 @@ export class Relay {
     if (!/^[!-~]{1,256}$/.test(token)) {
       throw new Error('请输入电脑端显示的配对令牌')
     }
-    const sameReceiver = this.state.endpoint === endpoint
-    this.commit(endpoint, token, sameReceiver ? this.state.autoSince : 0, this.resetItemsFor(endpoint))
+    this.commit(endpoint, token, this.resetItemsFor(endpoint))
     this.blockedEndpoint = ''
     this.receiverRetryAt = 0
-    this.notify('已保存电脑地址和配对令牌。')
+    this.notify('')
     this.run()
   }
 
@@ -119,27 +116,6 @@ export class Relay {
     return true
   }
 
-  async enableDetection(): Promise<void> {
-    const endpoint = this.requireReceiver()
-    if (!(await requestMediaAccess(this.context))) {
-      this.notify('系统未授予相册权限，自动上传保持关闭。可在下方手动选择文件上传。')
-      return
-    }
-    if (endpoint !== this.state.endpoint) {
-      return
-    }
-    if (this.state.autoSince === 0) {
-      this.commit(endpoint, this.state.token, Date.now(), this.state.items)
-    }
-    this.notify('自动上传已开启。返回应用时会补查新截图和录屏。')
-    this.run()
-  }
-
-  disableDetection(): void {
-    this.commit(this.state.endpoint, this.state.token, 0, this.state.items)
-    this.notify('自动上传已关闭。待自动上传的文件已暂停，手动选择的文件可继续发送。')
-  }
-
   async addSelected(uris: string[], kind: MediaKind): Promise<SelectedResult> {
     const endpoint = this.requireReceiver()
     let added = 0
@@ -152,7 +128,7 @@ export class Relay {
         failure = '配对电脑已变更，请重新发送所选文件。'
         continue
       }
-      const item = this.newItem(endpoint, { uri: uri, filename: '', kind: kind }, true)
+      const item = this.newItem(endpoint, uri, kind)
       if (this.contains(endpoint, item.key)) {
         skipped += 1
         continue
@@ -194,7 +170,7 @@ export class Relay {
 
   retry(): void {
     this.requireReceiver()
-    this.commit(this.state.endpoint, this.state.token, this.state.autoSince, this.resetItemsFor(this.state.endpoint))
+    this.commit(this.state.endpoint, this.state.token, this.resetItemsFor(this.state.endpoint))
     this.blockedEndpoint = ''
     this.receiverRetryAt = 0
     this.notify('正在检查待发送文件。')
@@ -222,16 +198,16 @@ export class Relay {
     this.onChange(this.status())
   }
 
-  private commit(endpoint: string, token: string, autoSince: number, items: UploadItem[]): void {
+  private commit(endpoint: string, token: string, items: UploadItem[]): void {
     const next: SavedState = {
-      version: 1, deviceId: this.state.deviceId, endpoint: endpoint, token: token, autoSince: autoSince, items: items
+      version: this.state.version, deviceId: this.state.deviceId, endpoint: endpoint, token: token, items: items
     }
     this.store.save(next)
     this.state = next
   }
 
   private append(items: UploadItem[]): void {
-    this.commit(this.state.endpoint, this.state.token, this.state.autoSince, this.state.items.concat(items))
+    this.commit(this.state.endpoint, this.state.token, this.state.items.concat(items))
   }
 
   private contains(endpoint: string, key: string): boolean {
@@ -239,15 +215,15 @@ export class Relay {
       item.target === endpoint && item.key === key && item.state !== 'failed')
   }
 
-  private newItem(endpoint: string, capture: Capture, staged: boolean): UploadItem {
+  private newItem(endpoint: string, uri: string, kind: MediaKind): UploadItem {
     return {
       id: util.generateRandomUUID(),
       target: endpoint,
-      key: captureKey(capture.uri),
-      uri: capture.uri,
-      filename: capture.filename,
-      kind: capture.kind,
-      staged: staged,
+      key: captureKey(uri),
+      uri: uri,
+      filename: '',
+      kind: kind,
+      staged: true,
       state: 'pending',
       attempts: 0,
       retryAt: 0,
@@ -274,48 +250,16 @@ export class Relay {
 
   private record(item: UploadItem): void {
     const items = this.state.items.map((current: UploadItem): UploadItem => current.id === item.id ? item : current)
-    this.commit(this.state.endpoint, this.state.token, this.state.autoSince, items)
+    this.commit(this.state.endpoint, this.state.token, items)
     if (item.staged && item.state !== 'pending') {
       this.store.removeStaged(item.id)
-    }
-  }
-
-  private async scan(endpoint: string, since: number): Promise<void> {
-    let captures: Capture[]
-    try {
-      captures = await getNewCaptures(this.context, since)
-    } catch (_) {
-      this.notify('系统当前无法读取相册。请检查自动发现权限，或手动选择文件。')
-      return
-    }
-    if (this.state.endpoint !== endpoint || this.state.autoSince !== since || !this.foreground) {
-      return
-    }
-
-    const known = new Set<string>()
-    for (const item of this.state.items) {
-      if (item.target === endpoint) {
-        known.add(item.key)
-      }
-    }
-    const discovered: UploadItem[] = []
-    for (const capture of captures) {
-      const key = captureKey(capture.uri)
-      if (!known.has(key)) {
-        known.add(key)
-        discovered.push(this.newItem(endpoint, capture, false))
-      }
-    }
-    if (discovered.length > 0) {
-      this.append(discovered)
-      this.notify('发现 ' + discovered.length + ' 个新截图或录屏。')
     }
   }
 
   private delay(item: UploadItem, message: string, receiverRetryAfter?: string): void {
     const attempts = item.attempts + 1
     const now = Date.now()
-    let delay = SCAN_INTERVAL_MS * Math.pow(2, Math.min(attempts, 8))
+    let delay = RETRY_INTERVAL_MS * Math.pow(2, Math.min(attempts, 8))
     if (receiverRetryAfter !== undefined) {
       const hint = receiverRetryAfter.trim()
       const suggested = /^\d+$/.test(hint) ? Number(hint) * 1000 : Date.parse(hint) - now
@@ -337,7 +281,7 @@ export class Relay {
   }
 
   private async upload(item: UploadItem, token: string): Promise<void> {
-    const source = item.staged ? this.store.stagedPath(item.id) : item.uri
+    const source = this.store.stagedPath(item.id)
     this.notify('正在发送 ' + item.filename)
     let response: UploadResponse
     try {
@@ -399,17 +343,13 @@ export class Relay {
     this.running = true
     const endpoint = this.state.endpoint
     try {
-      if (this.state.autoSince > 0) {
-        await this.scan(endpoint, this.state.autoSince)
-      }
       while (this.foreground && this.state.endpoint === endpoint && this.blockedEndpoint !== endpoint) {
         const readyAt = Date.now()
         if (readyAt < this.receiverRetryAt) {
           break
         }
         const next = this.state.items.find((item: UploadItem): boolean =>
-          item.target === endpoint && item.state === 'pending' && item.retryAt <= readyAt &&
-          (item.staged || this.state.autoSince > 0))
+          item.staged && item.target === endpoint && item.state === 'pending' && item.retryAt <= readyAt)
         if (next === undefined) {
           break
         }

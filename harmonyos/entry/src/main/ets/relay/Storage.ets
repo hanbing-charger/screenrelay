@@ -4,6 +4,7 @@ import { BusinessError } from '@kit.BasicServicesKit'
 import type { MediaKind } from './Media'
 
 type UploadState = 'pending' | 'sent' | 'failed'
+const STATE_VERSION = 2
 
 export interface UploadItem {
   id: string
@@ -24,7 +25,6 @@ export interface SavedState {
   deviceId: string
   endpoint: string
   token: string
-  autoSince: number
   items: UploadItem[]
 }
 
@@ -49,7 +49,7 @@ export class RelayStorage {
   private read(): SavedState | undefined {
     if (fileIo.accessSync(this.statePath)) {
       const state = JSON.parse(fileIo.readTextSync(this.statePath)) as SavedState
-      if (state.version !== 1 || !Array.isArray(state.items)) {
+      if ((state.version !== 1 && state.version !== STATE_VERSION) || !Array.isArray(state.items)) {
         throw new Error('传输记录格式无法识别')
       }
       return state
@@ -66,30 +66,31 @@ export class RelayStorage {
   }
 
   load(): SavedState {
-    const state = this.read()
-    if (state !== undefined) {
-      if (!state.deviceId) {
-        state.deviceId = util.generateRandomUUID()
-        this.save(state)
-      }
-      const pendingFiles = new Set<string>()
-      for (const item of state.items) {
-        if (item.staged && item.state === 'pending') {
-          pendingFiles.add(item.id)
-        }
-      }
-      for (const name of fileIo.listFileSync(this.spoolPath)) {
-        if (!pendingFiles.has(name)) {
-          this.removeStaged(name)
-        }
-      }
-      return state
+    const previous = this.read()
+    const state: SavedState = {
+      version: STATE_VERSION,
+      deviceId: previous?.deviceId || util.generateRandomUUID(),
+      endpoint: previous?.endpoint || '',
+      token: previous?.token || '',
+      // Older background discoveries had no private copy. Keep only user-selected uploads.
+      items: previous?.items.filter((item: UploadItem): boolean => item.staged === true) || []
     }
-    const initial: SavedState = {
-      version: 1, deviceId: util.generateRandomUUID(), endpoint: '', token: '', autoSince: 0, items: []
+    if (previous === undefined || previous.version !== STATE_VERSION || !previous.deviceId ||
+      previous.items.length !== state.items.length) {
+      this.save(state)
     }
-    this.save(initial)
-    return initial
+    const pendingFiles = new Set<string>()
+    for (const item of state.items) {
+      if (item.state === 'pending') {
+        pendingFiles.add(item.id)
+      }
+    }
+    for (const name of fileIo.listFileSync(this.spoolPath)) {
+      if (!pendingFiles.has(name)) {
+        this.removeStaged(name)
+      }
+    }
+    return state
   }
 
   save(state: SavedState): void {

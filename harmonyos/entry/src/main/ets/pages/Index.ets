@@ -8,11 +8,12 @@ import { scanDownloadCode } from '../relay/Pairing'
 import { Relay } from '../relay/Relay'
 import type { RelayStatus } from '../relay/Relay'
 
-const INK = '#102438'
-const SUBTLE = '#496276'
-const ACCENT = '#006658'
-const BACKGROUND = '#F2F7F6'
-const BORDER = '#DCE8E7'
+const INK = '#14234A'
+const SUBTLE = '#526282'
+const ACCENT = '#2558DD'
+const BACKGROUND = '#F3F6FC'
+const SURFACE_BLUE = '#EDF2FF'
+const BORDER = '#DFE7F4'
 
 @Entry
 @Component
@@ -20,8 +21,8 @@ struct Index {
   @State private address: string = ''
   @State private token: string = ''
   @State private paired: boolean = false
-  @State private detecting: boolean = false
-  @State private autoUploadMessage: string = ''
+  @State private pairedAddress: string = ''
+  @State private manualPairing: boolean = false
   @State private busy: boolean = false
   @State private pending: number = 0
   @State private sent: number = 0
@@ -29,7 +30,7 @@ struct Index {
   @State private otherReceivers: number = 0
   @State private selectedUris: string[] = []
   @State private selectionMessage: string = ''
-  @State private message: string = '配对电脑后即可发送截图和录屏。'
+  @State private message: string = ''
   @State private pairingMessage: string = ''
   @State private downloadMessage: string = ''
   @State private receivedDirectory: string = ''
@@ -74,7 +75,7 @@ struct Index {
 
   private applyStatus(status: RelayStatus): void {
     this.paired = Boolean(status.endpoint && status.token)
-    this.detecting = status.detecting
+    this.pairedAddress = status.endpoint
     this.pending = status.pending
     this.sent = status.sent
     this.failed = status.failed
@@ -97,8 +98,13 @@ struct Index {
   }
 
   private async saveConfiguration(): Promise<void> {
-    this.relay?.saveSettings(this.address, this.token)
-    this.pairingMessage = ''
+    try {
+      this.relay?.saveSettings(this.address, this.token)
+      this.manualPairing = false
+      this.pairingMessage = '已保存配对。'
+    } catch (error) {
+      this.pairingMessage = (error as BusinessError).message || '无法保存配对。'
+    }
   }
 
   private async scanPairing(): Promise<void> {
@@ -115,6 +121,7 @@ struct Index {
       const status = relay.status()
       this.address = status.endpoint
       this.token = status.token
+      this.manualPairing = false
       this.pairingMessage = '扫码配对成功。'
     } catch (error) {
       this.pairingMessage = (error as BusinessError).message || '扫码配对失败，请重试。'
@@ -123,10 +130,11 @@ struct Index {
 
   private async checkConnection(): Promise<void> {
     try {
-      const available = await this.relay?.checkConnection(this.address)
-      this.message = available ? '已连通电脑。发送时会验证令牌。' : '电脑没有返回可用状态。'
+      const target = this.manualPairing ? this.address : this.pairedAddress
+      const available = await this.relay?.checkConnection(target)
+      this.pairingMessage = available ? '电脑可以连接。' : '电脑没有返回可用状态。'
     } catch (_) {
-      this.message = '连接失败。请核对地址，确认手机和电脑在同一局域网。'
+      this.pairingMessage = '连接失败。请核对地址，并确认两台设备在同一局域网。'
     }
   }
 
@@ -169,37 +177,13 @@ struct Index {
     }
   }
 
-  private async changeDetection(enabled: boolean): Promise<void> {
-    const relay = this.relay
-    if (relay === undefined) {
-      return
-    }
-    this.autoUploadMessage = ''
-    this.detecting = enabled
-    try {
-      if (enabled) {
-        await relay.enableDetection()
-        const status = relay.status()
-        if (!status.detecting) {
-          this.autoUploadMessage = status.message
-        }
-      } else {
-        relay.disableDetection()
-      }
-    } catch (error) {
-      this.autoUploadMessage = (error as BusinessError).message || '无法更新自动上传设置，请重试。'
-    } finally {
-      this.detecting = relay.status().detecting
-    }
-  }
-
   private async pick(kind: MediaKind): Promise<void> {
     try {
       const uris = await selectCaptures(kind)
       if (uris.length > 0) {
         this.selectedUris = uris
         this.selectedKind = kind
-        this.selectionMessage = '已选择 ' + uris.length + ' 个文件，请点击下方按钮发送。'
+        this.selectionMessage = ''
       }
     } catch (_) {
       this.selectionMessage = '未能取得所选文件，请返回相册重新选择。'
@@ -224,96 +208,178 @@ struct Index {
 
   build() {
     Scroll() {
-      Column({ space: 18 }) {
-        Column({ space: 7 }) {
+      Column({ space: 16 }) {
+        Row({ space: 8 }) {
           Text('截屏快传')
-            .fontSize(32)
+            .fontSize(34)
             .fontWeight(FontWeight.Bold)
             .fontColor(INK)
-          Text('与同一局域网内的电脑传输文件。')
-            .fontSize(15)
-            .fontColor(SUBTLE)
-          Button('诊断日志')
-            .backgroundColor(Color.White)
-            .fontColor(ACCENT)
-            .enabled(!this.busy)
-            .onClick((): void => { this.getUIContext().getRouter().pushUrl({ url: 'pages/DiagnosticsPage' }) })
+            .layoutWeight(1)
+          Text(this.paired ? '已配对' : '未配对')
+            .fontSize(13)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(this.paired ? ACCENT : SUBTLE)
+            .backgroundColor(this.paired ? SURFACE_BLUE : Color.White)
+            .borderRadius(20)
+            .padding({ top: 6, right: 11, bottom: 6, left: 11 })
         }
-        .alignItems(HorizontalAlign.Start)
         .width('100%')
 
         Column({ space: 10 }) {
-          Text('配对电脑')
-            .fontSize(20)
-            .fontWeight(FontWeight.Bold)
-            .fontColor(INK)
-          Button('扫描配对二维码')
+          Button('选择图片上传')
             .width('100%')
+            .height(54)
+            .fontSize(17)
+            .fontWeight(FontWeight.Bold)
             .backgroundColor(ACCENT)
-            .enabled(!this.busy && this.relay !== undefined)
-            .onClick((): void => { this.action(() => this.scanPairing()) })
-          if (this.pairingMessage) {
-            Text(this.pairingMessage)
-              .fontSize(14)
-              .fontColor(SUBTLE)
-          }
-          Text('电脑地址')
-            .fontSize(14)
-            .fontColor(SUBTLE)
-          TextInput({ text: this.address, placeholder: 'http://192.168.1.20:8765' })
-            .type(InputType.Normal)
-            .backgroundColor(BACKGROUND)
-            .height(48)
-            .onChange((value: string): void => { this.address = value })
-          Text('配对令牌')
-            .fontSize(14)
-            .fontColor(SUBTLE)
-          TextInput({ text: this.token, placeholder: '输入电脑端显示的令牌' })
-            .type(InputType.Password)
-            .backgroundColor(BACKGROUND)
-            .height(48)
-            .onChange((value: string): void => { this.token = value })
+            .borderRadius(14)
+            .enabled(this.paired && !this.busy)
+            .onClick((): void => { this.action(() => this.pick('photo')) })
           Row({ space: 8 }) {
-            Button('保存配对')
+            Button('选择录屏')
               .layoutWeight(1)
-              .backgroundColor(BACKGROUND)
+              .height(44)
               .fontColor(ACCENT)
-              .enabled(!this.busy && this.relay !== undefined)
-              .onClick((): void => { this.action(() => this.saveConfiguration()) })
-            Button('测试连接')
+              .backgroundColor(SURFACE_BLUE)
+              .borderRadius(12)
+              .enabled(this.paired && !this.busy)
+              .onClick((): void => { this.action(() => this.pick('screen-recording')) })
+            Button('扫码接收文件')
               .layoutWeight(1)
-              .backgroundColor(BACKGROUND)
+              .height(44)
               .fontColor(ACCENT)
-              .enabled(!this.busy && this.relay !== undefined)
-              .onClick((): void => { this.action(() => this.checkConnection()) })
+              .backgroundColor(Color.White)
+              .border({ width: 1, color: BORDER })
+              .borderRadius(12)
+              .enabled(!this.busy && this.receiver !== undefined)
+              .onClick((): void => { this.action(() => this.scanDownload()) })
           }
           .width('100%')
-        }
-        .alignItems(HorizontalAlign.Start)
-        .backgroundColor(Color.White)
-        .border({ width: 1, color: BORDER })
-        .borderRadius(18)
-        .padding(16)
-        .width('100%')
-
-        Column({ space: 10 }) {
-          Text('从电脑接收')
-            .fontSize(20)
-            .fontWeight(FontWeight.Bold)
-            .fontColor(INK)
-          Button('扫码接收文件')
-            .width('100%')
-            .backgroundColor(ACCENT)
-            .enabled(!this.busy && this.receiver !== undefined)
-            .onClick((): void => { this.action(() => this.scanDownload()) })
+          if (this.selectedUris.length > 0) {
+            Button('发送所选的 ' + this.selectedUris.length + ' 个文件')
+              .width('100%')
+              .height(44)
+              .fontColor(ACCENT)
+              .backgroundColor(SURFACE_BLUE)
+              .borderRadius(12)
+              .enabled(this.paired && !this.busy)
+              .onClick((): void => { this.action(() => this.enqueue()) })
+          }
+          if (this.selectionMessage) {
+            Text(this.selectionMessage)
+              .fontSize(14)
+              .lineHeight(21)
+              .fontColor(SUBTLE)
+          }
           if (this.downloadMessage) {
             Text(this.downloadMessage)
               .fontSize(14)
               .lineHeight(21)
               .fontColor(SUBTLE)
           }
-          if (this.receivedFiles.length > 0) {
-            Text('应用内保存位置 ' + this.receivedDirectory)
+        }
+        .alignItems(HorizontalAlign.Start)
+        .backgroundColor(Color.White)
+        .border({ width: 1, color: BORDER })
+        .borderRadius(20)
+        .padding(16)
+        .width('100%')
+
+        Column({ space: 12 }) {
+          Text('配对电脑')
+            .fontSize(19)
+            .fontWeight(FontWeight.Bold)
+            .fontColor(INK)
+          if (this.paired) {
+            Text(this.pairedAddress)
+              .fontSize(14)
+              .fontColor(SUBTLE)
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+          }
+          Row({ space: 8 }) {
+            Button('扫码配对')
+              .layoutWeight(1)
+              .height(44)
+              .fontColor(ACCENT)
+              .backgroundColor(SURFACE_BLUE)
+              .borderRadius(12)
+              .enabled(!this.busy && this.relay !== undefined)
+              .onClick((): void => { this.action(() => this.scanPairing()) })
+            Button(this.manualPairing ? '收起手动配对' : '手动配对')
+              .layoutWeight(1)
+              .height(44)
+              .fontColor(ACCENT)
+              .backgroundColor(Color.White)
+              .border({ width: 1, color: BORDER })
+              .borderRadius(12)
+              .enabled(!this.busy && this.relay !== undefined)
+              .onClick((): void => { this.manualPairing = !this.manualPairing })
+          }
+          .width('100%')
+          if (this.manualPairing) {
+            Text('电脑地址')
+              .fontSize(14)
+              .fontColor(SUBTLE)
+            TextInput({ text: this.address, placeholder: 'http://192.168.1.20:8765' })
+              .type(InputType.Normal)
+              .backgroundColor(BACKGROUND)
+              .height(46)
+              .onChange((value: string): void => { this.address = value })
+            Text('配对令牌')
+              .fontSize(14)
+              .fontColor(SUBTLE)
+            TextInput({ text: this.token, placeholder: '输入电脑端显示的令牌' })
+              .type(InputType.Password)
+              .backgroundColor(BACKGROUND)
+              .height(46)
+              .onChange((value: string): void => { this.token = value })
+            Row({ space: 8 }) {
+              Button('保存配对')
+                .layoutWeight(1)
+                .height(44)
+                .backgroundColor(ACCENT)
+                .borderRadius(12)
+                .enabled(!this.busy && this.relay !== undefined)
+                .onClick((): void => { this.action(() => this.saveConfiguration()) })
+              Button('测试连接')
+                .layoutWeight(1)
+                .height(44)
+                .fontColor(ACCENT)
+                .backgroundColor(SURFACE_BLUE)
+                .borderRadius(12)
+                .enabled(!this.busy && this.relay !== undefined)
+                .onClick((): void => { this.action(() => this.checkConnection()) })
+            }
+            .width('100%')
+          } else if (this.paired) {
+            Button('测试连接')
+              .fontColor(ACCENT)
+              .backgroundColor(Color.White)
+              .enabled(!this.busy)
+              .onClick((): void => { this.action(() => this.checkConnection()) })
+          }
+          if (this.pairingMessage) {
+            Text(this.pairingMessage)
+              .fontSize(14)
+              .lineHeight(21)
+              .fontColor(SUBTLE)
+          }
+        }
+        .alignItems(HorizontalAlign.Start)
+        .backgroundColor(Color.White)
+        .border({ width: 1, color: BORDER })
+        .borderRadius(20)
+        .padding(16)
+        .width('100%')
+
+        if (this.receivedFiles.length > 0) {
+          Column({ space: 10 }) {
+            Text('已接收文件')
+              .fontSize(19)
+              .fontWeight(FontWeight.Bold)
+              .fontColor(INK)
+            Text(this.receivedDirectory)
               .fontSize(12)
               .fontColor(SUBTLE)
             ForEach(this.receivedFiles, (file: ReceivedFile) => {
@@ -325,7 +391,7 @@ struct Index {
                   .fontSize(14)
                   .fontColor(INK)
                 Button('导出')
-                  .backgroundColor(BACKGROUND)
+                  .backgroundColor(SURFACE_BLUE)
                   .fontColor(ACCENT)
                   .enabled(!this.busy)
                   .onClick((): void => { this.action(() => this.exportDownload(file)) })
@@ -333,119 +399,59 @@ struct Index {
               .width('100%')
             }, (file: ReceivedFile): string => file.path)
           }
+          .alignItems(HorizontalAlign.Start)
+          .backgroundColor(Color.White)
+          .border({ width: 1, color: BORDER })
+          .borderRadius(20)
+          .padding(16)
+          .width('100%')
         }
-        .alignItems(HorizontalAlign.Start)
-        .backgroundColor(Color.White)
-        .border({ width: 1, color: BORDER })
-        .borderRadius(18)
-        .padding(16)
-        .width('100%')
 
-        Column({ space: 10 }) {
-          Row({ space: 8 }) {
-            Text('自动上传截图和录屏')
-              .fontSize(18)
+        if (this.pending + this.sent + this.failed + this.otherReceivers > 0 || this.message) {
+          Column({ space: 10 }) {
+            Text('传输队列')
+              .fontSize(19)
               .fontWeight(FontWeight.Bold)
               .fontColor(INK)
-              .layoutWeight(1)
-            Toggle({ type: ToggleType.Switch, isOn: this.detecting })
-              .selectedColor(ACCENT)
-              .accessibilityText('自动上传截图和录屏')
-              .enabled(this.paired && !this.busy)
-              .onChange((enabled: boolean): void => {
-                if (!this.busy && enabled !== this.detecting) {
-                  this.action(() => this.changeDetection(enabled))
-                }
-              })
-          }
-          .width('100%')
-          Text(this.autoUploadMessage || (this.paired ?
-            '获得相册权限后，打开应用时检查并发送新截图和录屏。' : '配对电脑后可开启。'))
-            .fontSize(14)
-            .lineHeight(21)
-            .fontColor(SUBTLE)
-        }
-        .alignItems(HorizontalAlign.Start)
-        .backgroundColor(Color.White)
-        .border({ width: 1, color: BORDER })
-        .borderRadius(18)
-        .padding(16)
-        .width('100%')
-
-        Column({ space: 10 }) {
-          Text('从相册选取')
-            .fontSize(20)
-            .fontWeight(FontWeight.Bold)
-            .fontColor(INK)
-          Row({ space: 8 }) {
-            Button('选择图片上传')
-              .layoutWeight(1)
-              .backgroundColor(BACKGROUND)
-              .fontColor(ACCENT)
-              .enabled(this.paired && !this.busy)
-              .onClick((): void => { this.action(() => this.pick('photo')) })
-            Button('选择录屏')
-              .layoutWeight(1)
-              .backgroundColor(BACKGROUND)
-              .fontColor(ACCENT)
-              .enabled(this.paired && !this.busy)
-              .onClick((): void => { this.action(() => this.pick('screen-recording')) })
-          }
-          .width('100%')
-          if (this.selectionMessage) {
-            Text(this.selectionMessage)
+            Text(this.pending + ' 待发送  ·  ' + this.sent + ' 已发送  ·  ' + this.failed + ' 失败')
               .fontSize(14)
-              .fontColor(SUBTLE)
+              .fontColor(INK)
+            if (this.otherReceivers > 0) {
+              Text(this.otherReceivers + ' 个文件等待原配对地址恢复。')
+                .fontSize(14)
+                .fontColor(SUBTLE)
+            }
+            if (this.message) {
+              Text(this.message)
+                .fontSize(14)
+                .lineHeight(21)
+                .fontColor(SUBTLE)
+            }
+            if (this.pending > 0) {
+              Button('重试待传文件')
+                .backgroundColor(SURFACE_BLUE)
+                .fontColor(ACCENT)
+                .enabled(this.paired && !this.busy)
+                .onClick((): void => { this.action(() => this.retry()) })
+            }
           }
-          if (this.selectedUris.length > 0) {
-            Button('发送所选的 ' + this.selectedUris.length + ' 个文件')
-              .width('100%')
-              .backgroundColor(ACCENT)
-              .enabled(this.paired && !this.busy)
-              .onClick((): void => { this.action(() => this.enqueue()) })
-          }
+          .alignItems(HorizontalAlign.Start)
+          .backgroundColor(Color.White)
+          .border({ width: 1, color: BORDER })
+          .borderRadius(20)
+          .padding(16)
+          .width('100%')
         }
-        .alignItems(HorizontalAlign.Start)
-        .backgroundColor(Color.White)
-        .border({ width: 1, color: BORDER })
-        .borderRadius(18)
-        .padding(16)
-        .width('100%')
 
-        Column({ space: 10 }) {
-          Text('传输队列')
-            .fontSize(20)
-            .fontWeight(FontWeight.Bold)
-            .fontColor(INK)
-          Text(this.pending + ' 待发送  ·  ' + this.sent + ' 已发送  ·  ' + this.failed + ' 失败')
-            .fontSize(15)
-            .fontColor(INK)
-          if (this.otherReceivers > 0) {
-            Text(this.otherReceivers + ' 个文件等待原配对地址恢复。')
-              .fontSize(14)
-              .fontColor(SUBTLE)
-          }
-          Text(this.message)
-            .fontSize(14)
-            .lineHeight(21)
-            .fontColor(SUBTLE)
-          if (this.pending > 0) {
-            Button('重试待传文件')
-              .backgroundColor(BACKGROUND)
-              .fontColor(ACCENT)
-              .enabled(this.paired && !this.busy)
-              .onClick((): void => { this.action(() => this.retry()) })
-          }
-        }
-        .alignItems(HorizontalAlign.Start)
-        .backgroundColor(Color.White)
-        .border({ width: 1, color: BORDER })
-        .borderRadius(18)
-        .padding(16)
-        .width('100%')
+        Button('诊断日志')
+          .fontColor(SUBTLE)
+          .backgroundColor(Color.White)
+          .border({ width: 1, color: BORDER })
+          .enabled(!this.busy)
+          .onClick((): void => { this.getUIContext().getRouter().pushUrl({ url: 'pages/DiagnosticsPage' }) })
       }
       .alignItems(HorizontalAlign.Start)
-      .padding({ top: 28, right: 20, bottom: 24, left: 20 })
+      .padding({ top: 28, right: 18, bottom: 24, left: 18 })
       .width('100%')
       .constraintSize({ maxWidth: 620 })
     }

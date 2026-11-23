@@ -1,7 +1,6 @@
 {
   "string": [
     {"name": "app_name", "value": "截屏快传"},
-    {"name": "module_desc", "value": "在局域网内向电脑发送截图和录屏"},
-    {"name": "read_media_reason", "value": "查找新生成的截图和录屏并发送到你配对的电脑"}
+    {"name": "module_desc", "value": "在局域网内与电脑互传文件"}
   ]
 }
