@@ -17,6 +17,12 @@ xcodebuild -project ScreenRelay.xcodeproj -scheme ScreenRelay \
   -sdk iphonesimulator -configuration Debug CODE_SIGNING_ALLOWED=NO build
 ```
 
+## 手动上传图片
+
+手机和电脑接收端均更新至 0.7.0 或以上后，在手机首页点 **选择图片上传**，选择要发到已配对电脑的图片。iOS 14 及以上支持多选。系统选择器只向应用提供你选中的图片，手动上传与自动同步独立。
+
+应用直接上传选择器提供的图片文件，并尽可能保留文件名和格式。iOS 13 的系统选择器支持单选。如果它只返回图像对象，应用会转为 JPEG。上传失败的文件会作为私有副本保留，重开应用也可点 **重试待传图片**。清除待传副本时，相册里的原图会保留。
+
 ## 从电脑接收文件
 
 1. 在同一局域网内，从电脑端选择要分享的文件并生成文件分享二维码。

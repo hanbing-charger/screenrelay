@@ -15,6 +15,8 @@
         660000000000000000000007 /* FileReceive.swift in Sources */ = {isa = PBXBuildFile; fileRef = 660000000000000000000019 /* FileReceive.swift */; };
         660000000000000000000008 /* Diagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 66000000000000000000001A /* Diagnostics.swift */; };
         660000000000000000000009 /* DiagnosticsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 66000000000000000000001B /* DiagnosticsView.swift */; };
+        66000000000000000000000A /* ImageUpload.swift in Sources */ = {isa = PBXBuildFile; fileRef = 66000000000000000000001C /* ImageUpload.swift */; };
+        66000000000000000000000B /* PhotoPickerSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 66000000000000000000001D /* PhotoPickerSheet.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -29,6 +31,8 @@
         660000000000000000000019 /* FileReceive.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileReceive.swift; sourceTree = "<group>"; };
         66000000000000000000001A /* Diagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Diagnostics.swift; sourceTree = "<group>"; };
         66000000000000000000001B /* DiagnosticsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticsView.swift; sourceTree = "<group>"; };
+        66000000000000000000001C /* ImageUpload.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageUpload.swift; sourceTree = "<group>"; };
+        66000000000000000000001D /* PhotoPickerSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoPickerSheet.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -61,6 +65,8 @@
                 660000000000000000000019 /* FileReceive.swift */,
                 66000000000000000000001A /* Diagnostics.swift */,
                 66000000000000000000001B /* DiagnosticsView.swift */,
+                66000000000000000000001C /* ImageUpload.swift */,
+                66000000000000000000001D /* PhotoPickerSheet.swift */,
                 660000000000000000000015 /* Info.plist */,
             );
             path = ScreenRelay;
@@ -143,6 +149,8 @@
                 660000000000000000000007 /* FileReceive.swift in Sources */,
                 660000000000000000000008 /* Diagnostics.swift in Sources */,
                 660000000000000000000009 /* DiagnosticsView.swift in Sources */,
+                66000000000000000000000A /* ImageUpload.swift in Sources */,
+                66000000000000000000000B /* PhotoPickerSheet.swift in Sources */,
             );
             runOnlyForDeploymentPostprocessing = 0;
         };

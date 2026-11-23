@@ -31,7 +31,7 @@
     <key>NSLocalNetworkUsageDescription</key>
     <string>连接局域网内的电脑，上传截屏和录屏，或接收电脑分享的文件。</string>
     <key>NSPhotoLibraryUsageDescription</key>
-    <string>查找相册中新保存的截屏和录屏并上传。相机照片和普通视频不会进入同步队列。</string>
+    <string>查找相册中新保存的截屏和录屏，或上传你手动选中的图片。</string>
     <key>PHPhotoLibraryPreventAutomaticLimitedAccessAlert</key>
     <true/>
     <key>NSAppTransportSecurity</key>

@@ -40,11 +40,14 @@ final class ScreenRelayDelegate: UIResponder, UIApplicationDelegate {
 final class ScreenRelaySceneDelegate: UIResponder, UIWindowSceneDelegate {
     var window: UIWindow?
     private let downloads = FileReceiveModel()
+    private let imageUploads = ImageUploadModel()
 
     func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options: UIScene.ConnectionOptions) {
         guard let windowScene = scene as? UIWindowScene else { return }
         let window = UIWindow(windowScene: windowScene)
-        window.rootViewController = UIHostingController(rootView: PairingView(model: SyncModel.shared, downloads: downloads))
+        window.rootViewController = UIHostingController(rootView: PairingView(
+            model: SyncModel.shared, downloads: downloads, imageUploads: imageUploads
+        ))
         self.window = window
         window.makeKeyAndVisible()
     }
@@ -82,20 +85,23 @@ private struct FileReceiveProgress: UIViewRepresentable {
 
 @MainActor
 private struct PairingView: View {
-    private enum ScanPurpose: String, Identifiable {
+    private enum Modal: String, Identifiable {
         case pairing
         case download
+        case images
 
         var id: String { rawValue }
     }
 
     @ObservedObject var model: SyncModel
     @ObservedObject var downloads: FileReceiveModel
+    @ObservedObject var imageUploads: ImageUploadModel
     @State private var address = ""
     @State private var token = ""
     @State private var testResult: String?
     @State private var testing = false
-    @State private var scanner: ScanPurpose?
+    @State private var modal: Modal?
+    @State private var confirmDiscard = false
     @State private var pairing = false
     @State private var pairingResult: String?
     private let timer = Timer.publish(every: 20, on: .main, in: .common).autoconnect()
@@ -104,6 +110,7 @@ private struct PairingView: View {
         NavigationView {
             Form {
                 pairingSection
+                imageUploadSection
                 receiveSection
                 syncSection
                 progressSection
@@ -121,22 +128,39 @@ private struct PairingView: View {
                 }
             }
             .navigationBarTitle("截屏快传")
-            .sheet(item: $scanner) { purpose in
-                PairQRCodeSheet(
-                    instruction: purpose == .pairing
-                        ? "将相机对准电脑接收端的配对二维码。"
-                        : "将相机对准电脑接收端的文件分享二维码。",
-                    unavailableMessage: purpose == .pairing
-                        ? "相机当前不可用。可返回手动填写电脑地址和配对码。"
-                        : "相机当前不可用，请检查相机后重试。"
-                ) { value in
-                    guard scanner == purpose else { return }
-                    scanner = nil
-                    switch purpose {
-                    case .pairing: pairWithQRCode(value)
-                    case .download: downloads.receive(scannedValue: value)
+            .sheet(item: $modal) { purpose in
+                if purpose == .images {
+                    PhotoPickerSheet { selection in
+                        guard modal == .images else { return }
+                        modal = nil
+                        imageUploads.accept(selection, sync: model)
+                    }
+                } else {
+                    PairQRCodeSheet(
+                        instruction: purpose == .pairing
+                            ? "将相机对准电脑接收端的配对二维码。"
+                            : "将相机对准电脑接收端的文件分享二维码。",
+                        unavailableMessage: purpose == .pairing
+                            ? "相机当前不可用。可返回手动填写电脑地址和配对码。"
+                            : "相机当前不可用，请检查相机后重试。"
+                    ) { value in
+                        guard modal == purpose else { return }
+                        modal = nil
+                        if purpose == .pairing {
+                            pairWithQRCode(value)
+                        } else {
+                            downloads.receive(scannedValue: value)
+                        }
                     }
                 }
+            }
+            .alert(isPresented: $confirmDiscard) {
+                Alert(
+                    title: Text("清除待传图片？"),
+                    message: Text("仅删除应用保存的待传副本，相册原图会保留。"),
+                    primaryButton: .destructive(Text("清除"), action: imageUploads.discardPending),
+                    secondaryButton: .cancel()
+                )
             }
             .onAppear {
                 guard let settings = model.settings else { return }
@@ -155,7 +179,7 @@ private struct PairingView: View {
         ) {
             Button {
                 pairingResult = nil
-                scanner = .pairing
+                modal = .pairing
             } label: {
                 HStack {
                     Image(systemName: "qrcode")
@@ -212,13 +236,41 @@ private struct PairingView: View {
         .disabled(pairing)
     }
 
+    private var imageUploadSection: some View {
+        Section(
+            header: Text("手动上传图片"),
+            footer: Text("选中的图片会发往已配对的电脑。")
+        ) {
+            Button("选择图片上传") { modal = .images }
+                .disabled(imageUploads.busy || model.settings == nil)
+            if model.settings == nil {
+                Text("请先配对电脑。").foregroundColor(.secondary)
+            }
+            if let message = imageUploads.message {
+                HStack {
+                    if imageUploads.busy {
+                        ActivityIndicator().frame(width: 24, height: 24)
+                    }
+                    Text(message).foregroundColor(.secondary)
+                }
+            }
+            if !imageUploads.pending.isEmpty {
+                Text("待传图片 \(imageUploads.pending.count) 张").foregroundColor(.secondary)
+                Button("重试待传图片") { imageUploads.retry(sync: model) }
+                    .disabled(imageUploads.busy || model.settings == nil)
+                Button("清除待传副本") { confirmDiscard = true }
+                    .disabled(imageUploads.busy)
+            }
+        }
+    }
+
     private var receiveSection: some View {
         Section(
             header: Text("从电脑接收"),
             footer: Text("收到的文件保存在「文件」App 的「我的 iPhone／截屏快传」。")
         ) {
             Button {
-                scanner = .download
+                modal = .download
             } label: {
                 HStack {
                     Image(systemName: "qrcode")

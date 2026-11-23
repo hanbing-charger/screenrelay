@@ -140,6 +140,11 @@ final class SyncModel: ObservableObject {
         return try await receiver.uploadDiagnostic(record, settings: settings, installationID: state.installationID)
     }
 
+    func sendPickedImage(_ image: PendingImage, file: URL, to settings: ReceiverSettings) async throws -> Int {
+        guard self.settings == settings else { throw ImageUploadIssue.pairingChanged }
+        return try await receiver.uploadPickedImage(image, file: file, settings: settings, installationID: state.installationID)
+    }
+
     func setEnabled(_ enabled: Bool) {
         load()
         guard loaded, state.settings != nil else { return }

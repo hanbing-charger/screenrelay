@@ -57,22 +57,26 @@ struct Capture {
     }
 
     func export(to url: URL) async throws {
-        let options = PHAssetResourceRequestOptions()
-        options.isNetworkAccessAllowed = true
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            PHAssetResourceManager.default().writeData(for: resource, toFile: url, options: options) { error in
-                if let error {
-                    continuation.resume(throwing: error)
-                } else {
-                    continuation.resume()
-                }
+        try await exportPhotoResource(resource, to: url)
+    }
+}
+
+func exportPhotoResource(_ resource: PHAssetResource, to url: URL) async throws {
+    let options = PHAssetResourceRequestOptions()
+    options.isNetworkAccessAllowed = true
+    try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+        PHAssetResourceManager.default().writeData(for: resource, toFile: url, options: options) { error in
+            if let error {
+                continuation.resume(throwing: error)
+            } else {
+                continuation.resume()
             }
         }
-        try FileManager.default.setAttributes(
-            [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
-            ofItemAtPath: url.path
-        )
     }
+    try FileManager.default.setAttributes(
+        [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
+        ofItemAtPath: url.path
+    )
 }
 
 final class LibraryObserver: NSObject, PHPhotoLibraryChangeObserver {

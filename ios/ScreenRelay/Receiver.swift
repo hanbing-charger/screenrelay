@@ -281,6 +281,13 @@ final class Receiver {
                                     sizeLimit: DiagnosticRecord.maxBytes)
     }
 
+    func uploadPickedImage(_ image: PendingImage, file: URL, settings: ReceiverSettings, installationID: String) async throws -> Int {
+        let identifier = SHA256.hash(data: Data("\(installationID):photo:\(image.id.uuidString)".utf8))
+            .map { String(format: "%02x", $0) }.joined()
+        return try await uploadFile(file, filename: image.filename, kind: "photo", contentType: image.mimeType,
+                                    identifier: identifier, settings: settings)
+    }
+
     private func uploadFile(
         _ file: URL, filename: String, kind: String, contentType: String, identifier: String,
         settings: ReceiverSettings, sizeLimit: Int? = nil
