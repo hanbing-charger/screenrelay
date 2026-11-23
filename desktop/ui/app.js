@@ -20,17 +20,17 @@ const elements = {
   devicesCount: document.getElementById("devices-count"),
   devicesEmpty: document.getElementById("devices-empty"),
   deviceList: document.getElementById("device-list"),
-  folder: document.getElementById("folder-path"),
-  openFolder: document.getElementById("open-folder"),
-  folderFeedback: document.getElementById("folder-feedback"),
-  editFolder: document.getElementById("edit-folder"),
   folderDialog: document.getElementById("folder-dialog"),
+  folderDialogHeading: document.getElementById("folder-dialog-heading"),
+  folderHelp: document.getElementById("folder-help"),
   folderForm: document.getElementById("folder-form"),
   folderInput: document.getElementById("folder-input"),
   folderEditFeedback: document.getElementById("folder-edit-feedback"),
   pickFolder: document.getElementById("pick-folder"),
   cancelFolder: document.getElementById("cancel-folder"),
   saveFolder: document.getElementById("save-folder"),
+  resetPhotoFolder: document.getElementById("reset-photo-folder"),
+  photoFolderMode: document.getElementById("photo-folder-mode"),
   openFileShare: document.getElementById("open-file-share"),
   closeFileShare: document.getElementById("close-file-share"),
   fileShareDialog: document.getElementById("file-share-dialog"),
@@ -53,6 +53,35 @@ const elements = {
   version: document.getElementById("version"),
 };
 
+const receiveFolder = {
+  name: "保存位置",
+  help: "选择文件夹或输入绝对路径。新接收的文件会保存到该位置。",
+  statusField: "folder",
+  endpoint: "/api/folder",
+  openEndpoint: "/api/open-folder",
+  pathView: document.getElementById("folder-path"),
+  editButton: document.getElementById("edit-folder"),
+  openButton: document.getElementById("open-folder"),
+  feedback: document.getElementById("folder-feedback"),
+  path: "",
+  opening: false,
+};
+
+const photoFolder = {
+  name: "图片保存位置",
+  help: "选择文件夹或输入绝对路径。此设置用于手机端手动上传的图片。",
+  statusField: "photoFolder",
+  endpoint: "/api/photo-folder",
+  openEndpoint: "/api/photo-folder/open",
+  pathView: document.getElementById("photo-folder-path"),
+  editButton: document.getElementById("edit-photo-folder"),
+  openButton: document.getElementById("open-photo-folder"),
+  feedback: document.getElementById("photo-folder-feedback"),
+  path: "",
+  opening: false,
+  custom: false,
+};
+
 const dateFormat = new Intl.DateTimeFormat("zh-CN", {
   year: "numeric",
   month: "short",
@@ -69,8 +98,7 @@ let previousFiles = "";
 let statusLoaded = false;
 let statusRequest;
 let statusTimer;
-let folderPath = "";
-let folderOpening = false;
+let folderEditor;
 let folderEditorAction = "";
 let folderPickerRequest;
 let pairingRequest;
@@ -90,12 +118,17 @@ function setFeedback(element, message, isError = false) {
   element.dataset.error = String(isError);
 }
 
-function updateFolder(folder) {
-  folderPath = folder;
-  const label = folder || "保存位置不可用";
-  if (elements.folder.textContent !== label) elements.folder.textContent = label;
-  elements.openFolder.disabled = !folderPath || folderOpening;
-  elements.editFolder.disabled = !folderPath;
+function updateFolder(folder, path, custom = false) {
+  folder.path = path;
+  const label = path || `${folder.name}不可用`;
+  if (folder.pathView.textContent !== label) folder.pathView.textContent = label;
+  folder.openButton.disabled = !path || folder.opening;
+  folder.editButton.disabled = !path;
+  if (folder === photoFolder) {
+    folder.custom = custom;
+    elements.photoFolderMode.hidden = !path;
+    elements.photoFolderMode.textContent = custom ? "独立文件夹" : "跟随保存位置";
+  }
 }
 
 function setFolderEditorAction(action) {
@@ -104,6 +137,7 @@ function setFolderEditorAction(action) {
   elements.folderInput.readOnly = busy;
   elements.pickFolder.disabled = busy;
   elements.saveFolder.disabled = busy;
+  elements.resetPhotoFolder.disabled = busy;
   elements.cancelFolder.disabled = action === "saving";
 }
 
@@ -115,7 +149,7 @@ async function pickFolder() {
   setFeedback(elements.folderEditFeedback, "正在等待系统选择文件夹…");
   let picked = false;
   try {
-    const response = await fetch("/api/folder/pick", {
+    const response = await fetch(`${folderEditor.endpoint}/pick`, {
       method: "POST",
       headers: { "X-ScreenRelay": "1" },
       signal: controller.signal,
@@ -144,34 +178,34 @@ async function pickFolder() {
   }
 }
 
-async function saveFolder(event) {
-  event.preventDefault();
+async function saveFolder(path, reset = false) {
   if (folderEditorAction) return;
-  const path = elements.folderInput.value;
-  if (!path.trim()) {
+  if (!reset && !path.trim()) {
     setFeedback(elements.folderEditFeedback, "请输入文件夹的绝对路径。", true);
     elements.folderInput.focus();
     return;
   }
+  const folder = folderEditor;
   setFolderEditorAction("saving");
   setFeedback(elements.folderEditFeedback, "正在保存…");
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 12000);
   try {
-    const response = await fetch("/api/folder", {
+    const response = await fetch(folder.endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-ScreenRelay": "1" },
       body: JSON.stringify({ path }),
       signal: controller.signal,
     });
     const data = await response.json().catch(() => null);
-    if (!response.ok || typeof data?.folder !== "string" || !data.folder) {
+    const savedPath = data?.[folder.statusField];
+    if (!response.ok || typeof savedPath !== "string" || !savedPath) {
       setFeedback(elements.folderEditFeedback, data?.error || "无法保存，请检查文件夹路径后重试。", true);
       return;
     }
-    updateFolder(data.folder);
+    updateFolder(folder, savedPath, data.photoFolderCustom === true);
     elements.folderDialog.close();
-    setFeedback(elements.folderFeedback, "保存位置已更新");
+    setFeedback(folder.feedback, reset ? "图片已恢复跟随保存位置" : `${folder.name}已更新`);
     refreshStatus();
   } catch {
     setFeedback(elements.folderEditFeedback, "保存请求未完成，请稍后重试。", true);
@@ -180,6 +214,27 @@ async function saveFolder(event) {
     clearTimeout(timeout);
     setFolderEditorAction("");
     if (elements.folderDialog.open) elements.folderInput.focus();
+  }
+}
+
+async function openFolder(folder) {
+  folder.opening = true;
+  folder.openButton.disabled = true;
+  folder.openButton.setAttribute("aria-busy", "true");
+  setFeedback(folder.feedback, "");
+  try {
+    const response = await fetch(folder.openEndpoint, {
+      method: "POST",
+      headers: { "X-ScreenRelay": "1" },
+    });
+    if (!response.ok) throw new Error("folder");
+    setFeedback(folder.feedback, "已请求系统打开文件夹");
+  } catch {
+    setFeedback(folder.feedback, "无法打开文件夹，请在文件管理器中输入上方路径。", true);
+  } finally {
+    folder.opening = false;
+    folder.openButton.disabled = !folder.path;
+    folder.openButton.removeAttribute("aria-busy");
   }
 }
 
@@ -512,6 +567,7 @@ function showStatus(data) {
   const files = Array.isArray(data.recent) ? data.recent.filter((file) => typeof file?.name === "string") : [];
   const token = typeof data.token === "string" ? data.token : "";
   const folder = typeof data.folder === "string" ? data.folder : "";
+  const photoPath = typeof data.photoFolder === "string" ? data.photoFolder : "";
 
   if (!data.listening) setStatus("接收服务未启动", "unavailable");
   else if (addresses.length === 0) setStatus("等待局域网连接", "unavailable");
@@ -529,7 +585,8 @@ function showStatus(data) {
   elements.copyCode.disabled = !token;
   elements.toggleCode.disabled = !token;
 
-  updateFolder(folder);
+  updateFolder(receiveFolder, folder);
+  updateFolder(photoFolder, photoPath, data.photoFolderCustom === true);
   updateFiles(files);
 
   const version = typeof data.version === "string" ? data.version : "";
@@ -560,7 +617,8 @@ async function refreshStatus() {
     if (!statusLoaded) {
       elements.address.replaceChildren(new Option("接收地址不可用", ""));
       elements.code.placeholder = "配对码不可用";
-      updateFolder("");
+      updateFolder(receiveFolder, "");
+      updateFolder(photoFolder, "");
       elements.emptyTitle.textContent = "暂时无法读取接收记录";
       elements.emptyDescription.textContent = "启动电脑接收端后会自动重连。";
       elements.devicesEmpty.textContent = "暂时无法读取已配对设备";
@@ -677,12 +735,23 @@ elements.fileShareForm.addEventListener("submit", (event) => {
   if (fileShareAvailable && address) requestFileShare("/api/file-share", { address, path });
 });
 
-elements.editFolder.addEventListener("click", () => {
-  elements.folderInput.value = folderPath;
-  setFeedback(elements.folderEditFeedback, "");
-  elements.folderDialog.showModal();
+for (const folder of [receiveFolder, photoFolder]) {
+  folder.openButton.addEventListener("click", () => openFolder(folder));
+  folder.editButton.addEventListener("click", () => {
+    folderEditor = folder;
+    elements.folderDialogHeading.textContent = `修改${folder.name}`;
+    elements.folderHelp.textContent = folder.help;
+    elements.folderInput.value = folder.path;
+    elements.resetPhotoFolder.hidden = folder !== photoFolder || !folder.custom;
+    setFeedback(elements.folderEditFeedback, "");
+    elements.folderDialog.showModal();
+  });
+}
+elements.folderForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  saveFolder(elements.folderInput.value);
 });
-elements.folderForm.addEventListener("submit", saveFolder);
+elements.resetPhotoFolder.addEventListener("click", () => saveFolder("", true));
 elements.pickFolder.addEventListener("click", pickFolder);
 elements.cancelFolder.addEventListener("click", () => elements.folderDialog.close());
 elements.folderDialog.addEventListener("cancel", (event) => {
@@ -693,27 +762,6 @@ elements.folderDialog.addEventListener("close", () => {
   folderPickerRequest?.abort();
   folderPickerRequest = undefined;
   setFolderEditorAction("");
-});
-
-elements.openFolder.addEventListener("click", async () => {
-  folderOpening = true;
-  elements.openFolder.disabled = true;
-  elements.openFolder.setAttribute("aria-busy", "true");
-  setFeedback(elements.folderFeedback, "");
-  try {
-    const response = await fetch("/api/open-folder", {
-      method: "POST",
-      headers: { "X-ScreenRelay": "1" },
-    });
-    if (!response.ok) throw new Error("folder");
-    setFeedback(elements.folderFeedback, "已请求系统打开文件夹");
-  } catch {
-    setFeedback(elements.folderFeedback, "无法打开文件夹，请在文件管理器中输入上方路径。", true);
-  } finally {
-    folderOpening = false;
-    elements.openFolder.disabled = !folderPath;
-    elements.openFolder.removeAttribute("aria-busy");
-  }
 });
 
 refreshStatus();

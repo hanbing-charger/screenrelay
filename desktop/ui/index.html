@@ -67,6 +67,22 @@
       </section>
     </div>
 
+    <section class="card photo-destination" aria-labelledby="photo-folder-heading">
+      <div>
+        <div class="photo-folder-heading">
+          <h2 id="photo-folder-heading">图片保存位置</h2>
+          <span class="file-count" id="photo-folder-mode" hidden></span>
+        </div>
+        <p class="photo-folder-note">用于手机端手动上传的图片。</p>
+        <p class="folder-path" id="photo-folder-path" dir="auto">正在获取图片保存位置</p>
+      </div>
+      <div class="folder-actions">
+        <button type="button" class="primary" id="open-photo-folder" disabled>打开图片文件夹<span aria-hidden="true">↗</span></button>
+        <button type="button" id="edit-photo-folder" aria-haspopup="dialog" aria-controls="folder-dialog" disabled>修改图片保存位置</button>
+      </div>
+      <p class="feedback" id="photo-folder-feedback" role="status"></p>
+    </section>
+
     <section class="card file-share" aria-labelledby="file-share-heading">
       <div>
         <h2 id="file-share-heading">文件下载码</h2>
@@ -147,6 +163,7 @@
       </div>
       <p class="feedback" id="folder-edit-feedback" role="status"></p>
       <div class="dialog-actions">
+        <button type="button" id="reset-photo-folder" hidden>恢复跟随保存位置</button>
         <button type="button" id="cancel-folder">取消</button>
         <button type="submit" class="primary" id="save-folder">保存</button>
       </div>

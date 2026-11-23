@@ -127,6 +127,12 @@ select.value:disabled, input.value::placeholder { color: #5a6b64; opacity: 1; }
 .primary { padding-inline: 12px; border-color: transparent; color: #fff; background: var(--accent); }
 .primary:enabled:hover { border-color: transparent; background: var(--accent-hover); }
 .primary:disabled { color: #51635f; background: #dbe7df; }
+.photo-destination { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; column-gap: 16px; margin-top: 16px; padding: 18px clamp(18px, 3vw, 25px); }
+.photo-folder-heading { display: flex; align-items: baseline; flex-wrap: wrap; gap: 5px 10px; }
+.photo-folder-note { margin: 5px 0 0; color: var(--muted); font-size: .86rem; }
+.photo-destination .folder-path { margin: 6px 0 0; }
+.photo-destination .folder-actions { margin-top: 0; }
+.photo-destination .feedback { grid-column: 1 / -1; }
 
 .devices, .activity, .file-share { margin-top: 16px; }
 .file-share { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 12px; padding: 18px clamp(18px, 3vw, 25px); }
@@ -170,6 +176,7 @@ select.value:disabled, input.value::placeholder { color: #5a6b64; opacity: 1; }
 .folder-dialog, .file-share-dialog { width: min(560px, calc(100% - 28px)); }
 .pairing-dialog::backdrop, .folder-dialog::backdrop, .file-share-dialog::backdrop { background: #192a2970; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+.folder-dialog .dialog-actions { flex-wrap: wrap; }
 .dialog-actions > button { min-width: 72px; }
 .dialog-heading > button { min-height: 34px; }
 .dialog-copy { margin: 12px 0 0; color: var(--muted); font-size: .88rem; line-height: 1.6; }
@@ -190,6 +197,8 @@ select.value:disabled, input.value::placeholder { color: #5a6b64; opacity: 1; }
   .destination .folder-mark { margin: 0; }
   .destination .folder-path, .destination .feedback { grid-column: 1 / -1; }
   .destination .folder-actions { grid-column: 1 / -1; justify-self: start; }
+  .photo-destination { grid-template-columns: 1fr; }
+  .photo-destination .folder-actions { margin-top: 12px; }
 }
 
 @media (max-width: 420px) {

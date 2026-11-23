@@ -15,7 +15,19 @@ import (
 
 type receiveLocationSettings struct {
 	Current string   `json:"current,omitempty"`
+	Photo   string   `json:"photo,omitempty"`
 	Folders []string `json:"folders"`
+}
+
+func (s *receiveLocationSettings) remember(folder string) {
+	if folder != "" && !slices.Contains(s.Folders, folder) {
+		s.Folders = append(slices.Clone(s.Folders), folder)
+	}
+}
+
+type photoDestination struct {
+	PhotoFolder       string `json:"photoFolder"`
+	PhotoFolderCustom bool   `json:"photoFolderCustom"`
 }
 
 type uploadLocation struct {
@@ -29,9 +41,11 @@ type receiveLocations struct {
 	changeMu     sync.Mutex
 	settings     receiveLocationSettings
 
-	mu     sync.RWMutex
-	stores []*captureStore // The current store is first. Published slices are immutable.
-	active map[string]*uploadLocation
+	mu          sync.RWMutex
+	stores      []*captureStore // The current store is first. Published slices are immutable.
+	photoFolder string
+	photoStore  *captureStore
+	active      map[string]*uploadLocation
 }
 
 func loadReceiveLocations(settingsPath, defaultFolder, explicitFolder string) (*receiveLocations, error) {
@@ -60,14 +74,22 @@ func loadReceiveLocations(settingsPath, defaultFolder, explicitFolder string) (*
 	if err != nil {
 		return nil, err
 	}
+	var photoFolder string
+	if settings.Photo != "" {
+		photoFolder, err = absoluteReceiveFolder(settings.Photo)
+		if err != nil {
+			return nil, err
+		}
+	}
 
 	locations := &receiveLocations{
 		settingsPath: settingsPath,
 		settings:     settings,
 		stores:       []*captureStore{selected},
+		photoFolder:  photoFolder,
 		active:       make(map[string]*uploadLocation),
 	}
-	paths := append(slices.Clone(settings.Folders), settings.Current, defaultFolder)
+	paths := append(slices.Clone(settings.Folders), settings.Current, defaultFolder, photoFolder)
 	seen := map[string]bool{folder: true}
 	for _, path := range paths {
 		if !filepath.IsAbs(path) {
@@ -82,8 +104,11 @@ func loadReceiveLocations(settingsPath, defaultFolder, explicitFolder string) (*
 			locations.stores = append(locations.stores, store)
 		}
 	}
-	if !slices.Contains(settings.Folders, folder) {
-		settings.Folders = append(slices.Clone(settings.Folders), folder)
+	locations.photoStore = storeAt(locations.stores, photoFolder)
+	previousCount := len(settings.Folders)
+	settings.remember(folder)
+	settings.remember(photoFolder)
+	if len(settings.Folders) != previousCount {
 		if err := locations.persist(settings); err != nil {
 			return nil, err
 		}
@@ -140,6 +165,16 @@ func (l *receiveLocations) current() *captureStore {
 	return l.stores[0]
 }
 
+func (l *receiveLocations) folders() (string, photoDestination) {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	current := l.stores[0].root
+	if l.photoFolder != "" {
+		return current, photoDestination{PhotoFolder: l.photoFolder, PhotoFolderCustom: true}
+	}
+	return current, photoDestination{PhotoFolder: current}
+}
+
 func (l *receiveLocations) change(folder string) (string, error) {
 	folder, err := absoluteReceiveFolder(folder)
 	if err != nil {
@@ -149,27 +184,14 @@ func (l *receiveLocations) change(folder string) (string, error) {
 	defer l.changeMu.Unlock()
 
 	stores := l.stores
-	var selected *captureStore
-	for _, store := range stores {
-		if store.root == folder {
-			selected = store
-			break
-		}
-	}
-	if selected == nil {
-		selected, err = loadWritableReceiveStore(folder)
-	} else {
-		err = checkReceiveStoreWritable(selected)
-	}
+	selected, err := writableStoreAt(stores, folder)
 	if err != nil {
 		return "", err
 	}
 
 	settings := l.settings
 	settings.Current = folder
-	if !slices.Contains(settings.Folders, folder) {
-		settings.Folders = append(slices.Clone(settings.Folders), folder)
-	}
+	settings.remember(folder)
 	if err := l.persist(settings); err != nil {
 		return "", err
 	}
@@ -183,8 +205,95 @@ func (l *receiveLocations) change(folder string) (string, error) {
 	}
 	l.mu.Lock()
 	l.stores = next
+	if l.photoFolder == folder {
+		l.photoStore = selected
+	}
 	l.mu.Unlock()
 	return folder, nil
+}
+
+func (l *receiveLocations) changePhoto(folder string) (photoDestination, error) {
+	l.changeMu.Lock()
+	defer l.changeMu.Unlock()
+
+	stores := l.stores
+	var selected *captureStore
+	if folder != "" {
+		var err error
+		folder, err = absoluteReceiveFolder(folder)
+		if err != nil {
+			return photoDestination{}, err
+		}
+		selected, err = writableStoreAt(stores, folder)
+		if err != nil {
+			return photoDestination{}, err
+		}
+		if !slices.Contains(stores, selected) {
+			stores = append(slices.Clone(stores), selected)
+		}
+	}
+	settings := l.settings
+	settings.Photo = folder
+	settings.remember(folder)
+	if err := l.persist(settings); err != nil {
+		return photoDestination{}, err
+	}
+	l.mu.Lock()
+	l.stores = stores
+	l.photoFolder = folder
+	l.photoStore = selected
+	l.mu.Unlock()
+	_, destination := l.folders()
+	return destination, nil
+}
+
+func storeAt(stores []*captureStore, folder string) *captureStore {
+	for _, store := range stores {
+		if store.root == folder {
+			return store
+		}
+	}
+	return nil
+}
+
+func writableStoreAt(stores []*captureStore, folder string) (*captureStore, error) {
+	if store := storeAt(stores, folder); store != nil {
+		return store, checkReceiveStoreWritable(store)
+	}
+	return loadWritableReceiveStore(folder)
+}
+
+func (l *receiveLocations) reopenPhotoStore() {
+	l.mu.RLock()
+	offline := l.photoFolder != "" && l.photoStore == nil
+	l.mu.RUnlock()
+	if !offline {
+		return
+	}
+
+	// A mounted folder may become available again after startup. Reopen it
+	// without creating anything at the previously unavailable path.
+	l.changeMu.Lock()
+	defer l.changeMu.Unlock()
+	if l.photoFolder == "" || l.photoStore != nil {
+		return
+	}
+	store, err := readStore(l.photoFolder)
+	if err != nil {
+		return
+	}
+	l.mu.Lock()
+	l.stores = append(slices.Clone(l.stores), store)
+	l.photoStore = store
+	l.mu.Unlock()
+}
+
+// Called with mu held.
+func (l *receiveLocations) storeForKind(kind string) *captureStore {
+	if kind == photoKind && l.photoFolder != "" {
+		return l.photoStore
+	}
+	return l.stores[0]
 }
 
 func captureIDForUpload(uploadID string) string {
@@ -195,10 +304,15 @@ func captureIDForUpload(uploadID string) string {
 	return hex.EncodeToString(hash[:])
 }
 
-func (l *receiveLocations) openUpload(uploadID string) (*captureStore, func()) {
+func (l *receiveLocations) openUpload(uploadID, kind string) (*captureStore, func()) {
+	if kind == photoKind {
+		l.reopenPhotoStore()
+	}
 	id := captureIDForUpload(uploadID)
 	if id == "" {
-		return l.current(), func() {}
+		l.mu.RLock()
+		defer l.mu.RUnlock()
+		return l.storeForKind(kind), func() {}
 	}
 
 	l.mu.Lock()
@@ -206,11 +320,10 @@ func (l *receiveLocations) openUpload(uploadID string) (*captureStore, func()) {
 	if entry == nil {
 		// Reserve the ID before checking the disk so concurrent requests share one
 		// destination, even if the current folder changes during the lookup.
-		entry = &uploadLocation{ready: make(chan struct{}), users: 1}
+		entry = &uploadLocation{store: l.storeForKind(kind), ready: make(chan struct{}), users: 1}
 		l.active[id] = entry
 		stores := l.stores
 		l.mu.Unlock()
-		entry.store = stores[0]
 		if _, previous, ok := findCaptureStore(stores, id); ok {
 			entry.store = previous
 		}

@@ -17,7 +17,7 @@ func TestReceiveLocationChangesKeepActiveUploadsAndHistory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, releaseFirst := locations.openUpload("active")
+	first, releaseFirst := locations.openUpload("active", "screenshot")
 	if first.root != firstFolder {
 		t.Fatalf("initial upload destination = %q, want %q", first.root, firstFolder)
 	}
@@ -28,7 +28,7 @@ func TestReceiveLocationChangesKeepActiveUploadsAndHistory(t *testing.T) {
 	duplicateReady := make(chan *captureStore)
 	duplicateDone := make(chan struct{})
 	go func() {
-		duplicate, releaseDuplicate := locations.openUpload("active")
+		duplicate, releaseDuplicate := locations.openUpload("active", "screenshot")
 		duplicateReady <- duplicate
 		releaseDuplicate()
 		close(duplicateDone)
@@ -43,7 +43,7 @@ func TestReceiveLocationChangesKeepActiveUploadsAndHistory(t *testing.T) {
 	if err != nil || !created {
 		t.Fatalf("save active upload: created=%v, err=%v", created, err)
 	}
-	second, releaseSecond := locations.openUpload("new")
+	second, releaseSecond := locations.openUpload("new", "screenshot")
 	secondRecord, created, err := second.save(strings.NewReader("two"), 3, "new", "second.png", "screenshot")
 	releaseSecond()
 	if err != nil || !created || second.root != secondFolder {
@@ -63,7 +63,7 @@ func TestReceiveLocationChangesKeepActiveUploadsAndHistory(t *testing.T) {
 	if restarted.current().root != secondFolder {
 		t.Fatalf("restored current folder = %q, want %q", restarted.current().root, secondFolder)
 	}
-	retry, releaseRetry := restarted.openUpload("active")
+	retry, releaseRetry := restarted.openUpload("active", "screenshot")
 	repeated, created, err := retry.save(strings.NewReader("one"), 3, "active", "first.png", "screenshot")
 	releaseRetry()
 	if err != nil || created || repeated != firstRecord || retry.root != firstFolder {
@@ -112,5 +112,59 @@ func TestReceiveLocationStartupOverrideAndMissingHistory(t *testing.T) {
 	}
 	if _, err := os.Stat(defaultFolder); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("missing historical folder was re-created or unavailable for another reason: %v", err)
+	}
+}
+
+func TestPhotoLocationPinsActiveUploadsAndReopensAfterRemount(t *testing.T) {
+	base := t.TempDir()
+	settings := filepath.Join(base, "receive-folders.json")
+	defaultFolder := filepath.Join(base, "default")
+	photoFolder := filepath.Join(base, "photos")
+	locations, err := loadReceiveLocations(settings, defaultFolder, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, releaseFirst := locations.openUpload("active-photo", photoKind)
+	if _, err := locations.changePhoto(photoFolder); err != nil {
+		t.Fatal(err)
+	}
+	duplicate, releaseDuplicate := locations.openUpload("active-photo", photoKind)
+	if first != duplicate || first.root != defaultFolder {
+		t.Fatal("photo override redirected an existing reservation")
+	}
+	releaseDuplicate()
+	releaseFirst()
+
+	offlineFolder := filepath.Join(base, "offline")
+	if err := os.Rename(photoFolder, offlineFolder); err != nil {
+		t.Fatal(err)
+	}
+	locations, err = loadReceiveLocations(settings, defaultFolder, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, status := locations.folders(); !status.PhotoFolderCustom || status.PhotoFolder != photoFolder {
+		t.Fatalf("offline folder was not preserved: %+v", status)
+	}
+	photo, releasePhoto := locations.openUpload("new-photo", photoKind)
+	releasePhoto()
+	if photo != nil {
+		t.Fatal("photo should wait for configured destination")
+	}
+	if _, err := os.Stat(photoFolder); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("offline folder was re-created or unavailable for another reason: %v", err)
+	}
+	capture, releaseCapture := locations.openUpload("new-screenshot", "screenshot")
+	releaseCapture()
+	if capture.root != defaultFolder {
+		t.Fatal("offline photo folder interrupted screenshot routing")
+	}
+	if err := os.Rename(offlineFolder, photoFolder); err != nil {
+		t.Fatal(err)
+	}
+	photo, releasePhoto = locations.openUpload("new-photo", photoKind)
+	releasePhoto()
+	if photo == nil || photo.root != photoFolder {
+		t.Fatal("photo folder did not recover after being remounted")
 	}
 }

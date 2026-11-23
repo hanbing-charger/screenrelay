@@ -371,13 +371,112 @@ func TestStalledUploadCanRetryWithSameID(t *testing.T) {
 
 func changeFolderFromDashboard(s *relay, path, origin string) *httptest.ResponseRecorder {
 	body, _ := json.Marshal(map[string]string{"path": path})
-	request := httptest.NewRequest(http.MethodPost, "http://"+s.dashboardHost+"/api/folder", bytes.NewReader(body))
+	return postFromDashboard(s, "/api/folder", origin, body)
+}
+
+func postFromDashboard(s *relay, endpoint, origin string, body []byte) *httptest.ResponseRecorder {
+	request := httptest.NewRequest(http.MethodPost, "http://"+s.dashboardHost+endpoint, bytes.NewReader(body))
 	request.RemoteAddr = "127.0.0.1:40001"
 	request.Header.Set("X-ScreenRelay", "1")
 	request.Header.Set("Origin", origin)
 	response := httptest.NewRecorder()
 	s.dashboardAPI().ServeHTTP(response, request)
 	return response
+}
+
+func TestDashboardPhotoFolderRoutingAndHistory(t *testing.T) {
+	parent := t.TempDir()
+	initial := filepath.Join(parent, "initial")
+	next := filepath.Join(parent, "next")
+	firstPhoto := filepath.Join(parent, "图片")
+	secondPhoto := filepath.Join(parent, "图片归档")
+	service := testRelay(t, initial)
+	origin := "http://" + service.dashboardHost
+	const route = "/api/photo-folder"
+	for _, bad := range []struct {
+		origin, body string
+		status       int
+	}{
+		{"https://other.example", `{"path":""}`, http.StatusForbidden},
+		{origin, `{"path":"relative/new"}`, http.StatusBadRequest},
+		{origin, `{}`, http.StatusBadRequest},
+		{origin, `{"path":null}`, http.StatusBadRequest},
+	} {
+		if got := postFromDashboard(service, route, bad.origin, []byte(bad.body)); got.Code != bad.status {
+			t.Fatalf("invalid photo folder change got %d: %s", got.Code, got.Body)
+		}
+	}
+	for _, endpoint := range []string{route + "/pick", route + "/open"} {
+		if got := postFromDashboard(service, endpoint, "https://other.example", nil); got.Code != http.StatusForbidden {
+			t.Fatalf("cross-origin %s got %d", endpoint, got.Code)
+		}
+	}
+	statusIs := func(folder, photo string, custom bool) {
+		t.Helper()
+		response := localRequest(service, "/api/status")
+		var status dashboardStatus
+		if err := json.Unmarshal(response.Body.Bytes(), &status); err != nil || status.Folder != folder ||
+			status.PhotoFolder != photo || status.PhotoFolderCustom != custom {
+			t.Fatalf("unexpected folders in status: %s", response.Body)
+		}
+	}
+	selectPhoto := func(path, effective string, custom bool) {
+		t.Helper()
+		body, _ := json.Marshal(map[string]string{"path": path})
+		response := postFromDashboard(service, route, origin, body)
+		var selected photoDestination
+		if err := json.Unmarshal(response.Body.Bytes(), &selected); err != nil || response.Code != http.StatusOK ||
+			selected.PhotoFolder != effective || selected.PhotoFolderCustom != custom {
+			t.Fatalf("photo folder change got %d: %s", response.Code, response.Body)
+		}
+	}
+	const name = "相册 1.png"
+	content := []byte("photo data")
+	send := func(id, kind, expectedFolder string, status int) {
+		t.Helper()
+		response := sendCapture(service, id, name, kind, content)
+		if response.Code != status {
+			t.Fatalf("upload %s got %d: %s", id, response.Code, response.Body)
+		}
+		record, store, ok := service.locations.find(captureIDForUpload(id))
+		if !ok || store.root != expectedFolder || record.Kind != kind {
+			t.Fatalf("wrong destination for %s, store=%v file=%+v", id, store, record)
+		}
+		if data, err := os.ReadFile(record.path(store.root)); err != nil || !bytes.Equal(data, content) {
+			t.Fatalf("wrong saved bytes for %s: %v", id, err)
+		}
+	}
+
+	statusIs(initial, initial, false)
+	send("photo-in-default", photoKind, initial, http.StatusCreated)
+	selectPhoto(firstPhoto, firstPhoto, true)
+	send("photo-in-custom", photoKind, firstPhoto, http.StatusCreated)
+	if changed := changeFolderFromDashboard(service, next, origin); changed.Code != http.StatusOK {
+		t.Fatalf("default folder change got %d: %s", changed.Code, changed.Body)
+	}
+	statusIs(next, firstPhoto, true)
+	send("screenshot-in-default", "screenshot", next, http.StatusCreated)
+	if response := sendCapture(service, "photo-in-custom", name, "screenshot", content); response.Code != http.StatusConflict {
+		t.Fatalf("reuse of a photo ID for screenshot got %d", response.Code)
+	}
+	selectPhoto(secondPhoto, secondPhoto, true)
+	send("photo-in-custom", photoKind, firstPhoto, http.StatusOK)
+	send("photo-in-new-custom", photoKind, secondPhoto, http.StatusCreated)
+
+	service = testRelay(t, initial)
+	statusIs(next, secondPhoto, true)
+	send("photo-in-custom", photoKind, firstPhoto, http.StatusOK)
+	selectPhoto("", next, false)
+	send("photo-following-default", photoKind, next, http.StatusCreated)
+	service = testRelay(t, initial)
+	statusIs(next, next, false)
+	if len(service.locations.recent(40)) != 5 {
+		t.Fatalf("incomplete history after restart: %+v", service.locations.recent(40))
+	}
+	old := localRequest(service, "/files/"+captureIDForUpload("photo-in-custom")+"?download=1")
+	if old.Code != http.StatusOK || !bytes.Equal(old.Body.Bytes(), content) {
+		t.Fatalf("download from previous photo folder got %d", old.Code)
+	}
 }
 
 func TestDashboardCanChangeFolderWithoutLosingReceivedFiles(t *testing.T) {

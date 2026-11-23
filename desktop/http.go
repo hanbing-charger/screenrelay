@@ -146,8 +146,13 @@ func (s *relay) upload(w http.ResponseWriter, r *http.Request) {
 		connection: http.NewResponseController(w),
 		hardLimit:  time.Now().Add(uploadDuration),
 	}
-	store, finish := s.locations.openUpload(uploadID)
+	store, finish := s.locations.openUpload(uploadID, kind)
 	defer finish()
+	if store == nil {
+		w.Header().Set("Retry-After", "5")
+		writeError(w, http.StatusServiceUnavailable, "photo receive folder is unavailable")
+		return
+	}
 	record, created, err := store.save(stream, r.ContentLength, uploadID, name, kind)
 	switch {
 	case errors.Is(err, errUploadTimeout):
@@ -227,6 +232,7 @@ type dashboardStatus struct {
 	Folder    string                `json:"folder"`
 	Recent    []recentFile          `json:"recent"`
 	Devices   []pairedDeviceSummary `json:"devices"`
+	photoDestination
 }
 
 func (s *relay) dashboardAPI() http.Handler {
@@ -247,20 +253,21 @@ func (s *relay) dashboardAPI() http.Handler {
 	mux.HandleFunc("POST /api/folder/pick", s.pathPicker(func(ctx context.Context) (string, error) {
 		return pickReceiveFolder(ctx, s.locations.current().root)
 	}))
+	mux.HandleFunc("POST /api/open-folder", s.openFolder(func() string {
+		return s.locations.current().root
+	}))
+	mux.HandleFunc("POST /api/photo-folder", s.changePhotoFolder)
+	mux.HandleFunc("POST /api/photo-folder/pick", s.pathPicker(func(ctx context.Context) (string, error) {
+		_, destination := s.locations.folders()
+		return pickReceiveFolder(ctx, destination.PhotoFolder)
+	}))
+	mux.HandleFunc("POST /api/photo-folder/open", s.openFolder(func() string {
+		_, destination := s.locations.folders()
+		return destination.PhotoFolder
+	}))
 	mux.HandleFunc("POST /api/file-share", s.createFileShare)
 	mux.HandleFunc("POST /api/file-share/pick", s.pathPicker(pickShareFile))
 	mux.HandleFunc("GET /files/{id}", s.serveCapture)
-	mux.HandleFunc("POST /api/open-folder", func(w http.ResponseWriter, r *http.Request) {
-		if !s.dashboardActionAllowed(r) {
-			writeError(w, http.StatusForbidden, "dashboard origin required")
-			return
-		}
-		if err := openDesktop(s.locations.current().root, true); err != nil {
-			writeError(w, http.StatusInternalServerError, "无法打开保存目录")
-			return
-		}
-		w.WriteHeader(http.StatusNoContent)
-	})
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		host, _, _ := net.SplitHostPort(r.RemoteAddr)
 		ip := net.ParseIP(host)
@@ -283,6 +290,20 @@ func (s *relay) dashboardActionAllowed(r *http.Request) bool {
 		r.Header.Get("Origin") == "http://"+s.dashboardHost
 }
 
+func (s *relay) openFolder(folder func() string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !s.dashboardActionAllowed(r) {
+			writeError(w, http.StatusForbidden, "dashboard origin required")
+			return
+		}
+		if err := openDesktop(folder(), true); err != nil {
+			writeError(w, http.StatusInternalServerError, "无法打开保存目录")
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
 func (s *relay) changeReceiveFolder(w http.ResponseWriter, r *http.Request) {
 	if !s.dashboardActionAllowed(r) {
 		writeError(w, http.StatusForbidden, "dashboard origin required")
@@ -301,6 +322,27 @@ func (s *relay) changeReceiveFolder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"folder": folder})
+}
+
+func (s *relay) changePhotoFolder(w http.ResponseWriter, r *http.Request) {
+	if !s.dashboardActionAllowed(r) {
+		writeError(w, http.StatusForbidden, "dashboard origin required")
+		return
+	}
+	var request struct {
+		Path *string `json:"path"`
+	}
+	if err := readSmallJSON(w, r, &request); err != nil || request.Path == nil ||
+		(*request.Path != "" && !filepath.IsAbs(*request.Path)) {
+		writeError(w, http.StatusBadRequest, "请输入完整的图片保存路径，或选择文件夹。")
+		return
+	}
+	destination, err := s.locations.changePhoto(*request.Path)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "无法修改图片保存位置。"+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, destination)
 }
 
 func (s *relay) pathPicker(pick func(context.Context) (string, error)) http.HandlerFunc {
@@ -339,9 +381,10 @@ func (s *relay) status(w http.ResponseWriter, r *http.Request) {
 			CanPreview: canPreviewMedia(captureMediaType(record.Name, record.Kind)),
 		})
 	}
+	folder, destination := s.locations.folders()
 	writeJSON(w, http.StatusOK, dashboardStatus{
 		Version: version, Listening: true, Addresses: advertiseAddresses(s.listening, s.scheme),
-		Token: s.token, Folder: s.locations.current().root, Recent: recent, Devices: s.pairings.summaries(),
+		Token: s.token, Folder: folder, Recent: recent, Devices: s.pairings.summaries(), photoDestination: destination,
 	})
 }
 
