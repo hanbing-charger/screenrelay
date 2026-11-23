@@ -21,6 +21,7 @@ import java.util.function.BooleanSupplier;
 
 final class UploadClient {
     private static final long DIAGNOSTIC_LIMIT = 1024 * 1024;
+    private static final String PHOTO_KIND = "photo";
 
     private UploadClient() {}
 
@@ -43,6 +44,14 @@ final class UploadClient {
             }
             return upload(configuration, source, new Payload(
                     upload.name(), upload.kind(), upload.id(), upload.mime(), upload.size()), cancelled);
+        }
+    }
+
+    static int uploadPhoto(Settings.Configuration configuration, File file, String id,
+                           String name, String mime) throws IOException {
+        try (FileInputStream source = new FileInputStream(file)) {
+            return upload(configuration, source,
+                    new Payload(name, PHOTO_KIND, id, mime, source.getChannel().size()), () -> false);
         }
     }
 
@@ -126,7 +135,8 @@ final class UploadClient {
                 if (!cancelled.getAsBoolean()) {
                     try {
                         int response = connection.getResponseCode();
-                        if (response >= 401) {
+                        if (response >= 401 || (PHOTO_KIND.equals(payload.kind())
+                                && response == HttpURLConnection.HTTP_BAD_REQUEST)) {
                             return response;
                         }
                     } catch (IOException responseUnavailable) {

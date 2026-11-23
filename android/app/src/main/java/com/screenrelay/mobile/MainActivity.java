@@ -2,6 +2,8 @@ package com.screenrelay.mobile;
 
 import android.Manifest;
 import android.app.Activity;
+import android.content.ActivityNotFoundException;
+import android.content.ClipData;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
@@ -9,6 +11,7 @@ import android.graphics.Insets;
 import android.graphics.Rect;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
@@ -30,7 +33,10 @@ import com.journeyapps.barcodescanner.ScanIntentResult;
 import com.journeyapps.barcodescanner.ScanOptions;
 
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.Locale;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -41,6 +47,7 @@ public final class MainActivity extends Activity {
     private static final int QR_SCAN_REQUEST = 4;
     private static final int DOWNLOAD_CAMERA_PERMISSION_REQUEST = 5;
     private static final int DOWNLOAD_SCAN_REQUEST = 6;
+    private static final int CHOOSE_IMAGES_REQUEST = 7;
     private static final int BLUE = Color.rgb(37, 88, 221);
     private static final int INK = Color.rgb(23, 36, 62);
     private static final int SECONDARY = Color.rgb(72, 88, 113);
@@ -50,8 +57,10 @@ public final class MainActivity extends Activity {
     private final ExecutorService connectionTest = Executors.newSingleThreadExecutor();
     private final Runnable refresh = this::refreshDashboard;
     private final Runnable refreshDownload = this::refreshDownloadStatus;
+    private final Runnable refreshImages = this::refreshImageUploads;
     private Settings settings;
     private IncomingDownloads downloads;
+    private ManualImageUploads imageUploads;
     private Settings.Configuration awaitingPermission;
     private EditText address;
     private EditText secret;
@@ -71,6 +80,11 @@ public final class MainActivity extends Activity {
     private TextView downloadAmount;
     private ProgressBar downloadProgress;
     private String downloadFeedback = "";
+    private Button chooseImages;
+    private Button retryImages;
+    private Button discardImages;
+    private TextView imageStatus;
+    private String imageFeedback = "";
     private boolean pairingBusy;
 
     @Override
@@ -78,6 +92,7 @@ public final class MainActivity extends Activity {
         super.onCreate(state);
         settings = new Settings(this);
         downloads = IncomingDownloads.get(this);
+        imageUploads = ManualImageUploads.get(this);
         getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
         setContentView(makeScreen());
         Settings.Configuration saved = settings.configuration();
@@ -94,12 +109,14 @@ public final class MainActivity extends Activity {
         }
         refreshDashboard();
         refreshDownloadStatus();
+        refreshImageUploads();
     }
 
     @Override
     protected void onPause() {
         main.removeCallbacks(refresh);
         main.removeCallbacks(refreshDownload);
+        main.removeCallbacks(refreshImages);
         super.onPause();
     }
 
@@ -148,6 +165,7 @@ public final class MainActivity extends Activity {
         statistics = text("", 14, SECONDARY, false);
         add(dashboard, statistics, 10);
 
+        add(page, makeImageUploadCard(), 16);
         add(page, makeDownloadCard(), 16);
 
         LinearLayout pairing = card();
@@ -202,6 +220,108 @@ public final class MainActivity extends Activity {
         if (configuration != null) {
             activate(configuration);
         }
+    }
+
+    private View makeImageUploadCard() {
+        LinearLayout images = card();
+        chooseImages = button("选择图片上传", true);
+        chooseImages.setOnClickListener(view -> openImagePicker());
+        add(images, chooseImages, 0);
+        imageStatus = text("", 14, SECONDARY, false);
+        imageStatus.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
+        add(images, imageStatus, 8);
+        retryImages = button("继续上传图片", false);
+        retryImages.setOnClickListener(view -> {
+            Settings.Configuration configuration = imageUploadConfiguration();
+            if (configuration != null) {
+                imageFeedback = "";
+                imageUploads.resume(configuration);
+                refreshImageUploads();
+            }
+        });
+        add(images, retryImages, 8);
+        discardImages = button("清除暂存图片", false);
+        discardImages.setOnClickListener(view -> {
+            imageFeedback = "";
+            imageUploads.discard();
+            refreshImageUploads();
+        });
+        add(images, discardImages, 6);
+        return images;
+    }
+
+    private void refreshImageUploads() {
+        main.removeCallbacks(refreshImages);
+        ManualImageUploads.State uploads = imageUploads.state();
+        String message = imageFeedback.isEmpty() ? uploads.message() : imageFeedback;
+        if (!TextUtils.equals(message, imageStatus.getText())) {
+            imageStatus.setText(message);
+        }
+        imageStatus.setVisibility(message.isEmpty() ? View.GONE : View.VISIBLE);
+        chooseImages.setEnabled(!pairingBusy && !uploads.busy() && uploads.pending() == 0);
+        retryImages.setVisibility(!uploads.busy() && uploads.pending() > 0 ? View.VISIBLE : View.GONE);
+        retryImages.setEnabled(!pairingBusy);
+        discardImages.setVisibility(!uploads.busy() && uploads.pending() > 0 ? View.VISIBLE : View.GONE);
+        if (uploads.busy()) {
+            main.postDelayed(refreshImages, 250);
+        }
+    }
+
+    private Settings.Configuration imageUploadConfiguration() {
+        Settings.Configuration configuration = settings.configuration();
+        if (!configuration.origin().isEmpty() && !configuration.token().isEmpty()) {
+            return configuration;
+        }
+        try {
+            configuration = Settings.Configuration.fromInput(address.getText(), secret.getText());
+            settings.saveConfiguration(configuration);
+            return configuration;
+        } catch (IllegalArgumentException missingPairing) {
+            imageFeedback = "请先在下方扫码配对，或填入电脑地址和配对密钥。";
+            refreshImageUploads();
+            return null;
+        }
+    }
+
+    private void openImagePicker() {
+        if (imageUploadConfiguration() == null) {
+            return;
+        }
+        Intent picker = new Intent(Intent.ACTION_OPEN_DOCUMENT)
+                .addCategory(Intent.CATEGORY_OPENABLE)
+                .setType("image/*")
+                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                .putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+        try {
+            startActivityForResult(picker, CHOOSE_IMAGES_REQUEST);
+        } catch (ActivityNotFoundException unavailable) {
+            imageFeedback = "手机的系统文件选择器不可用。请启用系统文件应用后重试。";
+            refreshImageUploads();
+        }
+    }
+
+    private void uploadPickedImages(Intent data) {
+        Settings.Configuration configuration = imageUploadConfiguration();
+        if (configuration == null) {
+            return;
+        }
+        Set<Uri> selected = new LinkedHashSet<>();
+        ClipData images = data.getClipData();
+        if (images != null) {
+            for (int i = 0; i < images.getItemCount(); i++) {
+                Uri uri = images.getItemAt(i).getUri();
+                if (uri != null && "content".equals(uri.getScheme())) {
+                    selected.add(uri);
+                }
+            }
+        }
+        Uri image = data.getData();
+        if (image != null && "content".equals(image.getScheme())) {
+            selected.add(image);
+        }
+        imageFeedback = selected.isEmpty() ? "未能打开所选图片，请在系统文件选择器中重新选择。" : "";
+        imageUploads.start(new ArrayList<>(selected), configuration);
+        refreshImageUploads();
     }
 
     private View makeDownloadCard() {
@@ -295,6 +415,12 @@ public final class MainActivity extends Activity {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == CHOOSE_IMAGES_REQUEST) {
+            if (resultCode == RESULT_OK && data != null) {
+                uploadPickedImages(data);
+            }
+            return;
+        }
         if ((requestCode != QR_SCAN_REQUEST && requestCode != DOWNLOAD_SCAN_REQUEST)
                 || resultCode != RESULT_OK || data == null) {
             return;
@@ -351,6 +477,7 @@ public final class MainActivity extends Activity {
             control.setEnabled(!busy);
         }
         refreshDownloadStatus();
+        refreshImageUploads();
     }
 
     private void finishPairing(Settings.Configuration configuration, String error) {
@@ -365,7 +492,6 @@ public final class MainActivity extends Activity {
         address.setText(configuration.origin());
         secret.setText(configuration.token());
         if (!Settings.hasMediaAccess(this)) {
-            settings.saveConfiguration(configuration);
             showFeedback("已配对电脑，请授权访问照片和视频后开启自动上传。");
         }
         activate(configuration);
@@ -373,6 +499,7 @@ public final class MainActivity extends Activity {
 
     private void activate(Settings.Configuration configuration) {
         if (!Settings.hasMediaAccess(this)) {
+            settings.saveConfiguration(configuration);
             awaitingPermission = configuration;
             requestPermissions(Settings.mediaPermissions(), MEDIA_PERMISSION_REQUEST);
         } else {
@@ -472,7 +599,7 @@ public final class MainActivity extends Activity {
             Settings.Configuration requested = awaitingPermission;
             awaitingPermission = null;
             if (!Settings.hasMediaAccess(this)) {
-                showFeedback("请在系统设置中允许访问所有照片和视频，以便发现新截屏和录屏。");
+                showFeedback("自动发现截图和录屏需要访问所有照片和视频。可以用「选择图片上传」发送选中的照片。");
             } else if (requested != null) {
                 enable(requested);
             }
@@ -486,7 +613,8 @@ public final class MainActivity extends Activity {
         boolean authorized = Settings.hasMediaAccess(this);
         String detail = settings.status();
         if (!enabled) {
-            detail = settings.firstEnabledAt() < 0 ? "等待配对" : "自动上传已暂停";
+            detail = settings.configuration().origin().isEmpty() ? "等待配对"
+                    : settings.firstEnabledAt() < 0 ? "已保存配对，自动上传待开启" : "自动上传已暂停";
         } else if (!authorized) {
             detail = "需要相册访问权限";
         } else if (detail.isEmpty()) {
