@@ -21,6 +21,7 @@ struct Index {
   @State private token: string = ''
   @State private paired: boolean = false
   @State private detecting: boolean = false
+  @State private autoUploadMessage: string = ''
   @State private busy: boolean = false
   @State private pending: number = 0
   @State private sent: number = 0
@@ -168,11 +169,27 @@ struct Index {
     }
   }
 
-  private async changeDetection(): Promise<void> {
-    if (this.detecting) {
-      this.relay?.disableDetection()
-    } else {
-      await this.relay?.enableDetection()
+  private async changeDetection(enabled: boolean): Promise<void> {
+    const relay = this.relay
+    if (relay === undefined) {
+      return
+    }
+    this.autoUploadMessage = ''
+    this.detecting = enabled
+    try {
+      if (enabled) {
+        await relay.enableDetection()
+        const status = relay.status()
+        if (!status.detecting) {
+          this.autoUploadMessage = status.message
+        }
+      } else {
+        relay.disableDetection()
+      }
+    } catch (error) {
+      this.autoUploadMessage = (error as BusinessError).message || '无法更新自动上传设置，请重试。'
+    } finally {
+      this.detecting = relay.status().detecting
     }
   }
 
@@ -325,20 +342,28 @@ struct Index {
         .width('100%')
 
         Column({ space: 10 }) {
-          Text('自动发现')
-            .fontSize(20)
-            .fontWeight(FontWeight.Bold)
-            .fontColor(INK)
-          Text(this.detecting ? '已开启。应用打开时检查新文件，返回应用后补传。' :
-            '具备华为相册权限的安装包可开启自动发现。')
+          Row({ space: 8 }) {
+            Text('自动上传截图和录屏')
+              .fontSize(18)
+              .fontWeight(FontWeight.Bold)
+              .fontColor(INK)
+              .layoutWeight(1)
+            Toggle({ type: ToggleType.Switch, isOn: this.detecting })
+              .selectedColor(ACCENT)
+              .accessibilityText('自动上传截图和录屏')
+              .enabled(this.paired && !this.busy)
+              .onChange((enabled: boolean): void => {
+                if (!this.busy && enabled !== this.detecting) {
+                  this.action(() => this.changeDetection(enabled))
+                }
+              })
+          }
+          .width('100%')
+          Text(this.autoUploadMessage || (this.paired ?
+            '获得相册权限后，打开应用时检查并发送新截图和录屏。' : '配对电脑后可开启。'))
             .fontSize(14)
             .lineHeight(21)
             .fontColor(SUBTLE)
-          Button(this.detecting ? '暂停自动发现' : '授权并开启')
-            .backgroundColor(BACKGROUND)
-            .fontColor(ACCENT)
-            .enabled(this.paired && !this.busy)
-            .onClick((): void => { this.action(() => this.changeDetection()) })
         }
         .alignItems(HorizontalAlign.Start)
         .backgroundColor(Color.White)

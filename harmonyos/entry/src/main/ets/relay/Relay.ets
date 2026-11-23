@@ -122,7 +122,7 @@ export class Relay {
   async enableDetection(): Promise<void> {
     const endpoint = this.requireReceiver()
     if (!(await requestMediaAccess(this.context))) {
-      this.notify('系统未授予自动发现权限。你仍然可以通过下方的系统相册选择文件。')
+      this.notify('系统未授予相册权限，自动上传保持关闭。可在下方手动选择文件上传。')
       return
     }
     if (endpoint !== this.state.endpoint) {
@@ -131,13 +131,13 @@ export class Relay {
     if (this.state.autoSince === 0) {
       this.commit(endpoint, this.state.token, Date.now(), this.state.items)
     }
-    this.notify('自动发现已开启。返回应用时也会补查新截图和录屏。')
+    this.notify('自动上传已开启。返回应用时会补查新截图和录屏。')
     this.run()
   }
 
   disableDetection(): void {
     this.commit(this.state.endpoint, this.state.token, 0, this.state.items)
-    this.notify('已暂停发现新文件，队列中的文件会继续发送。')
+    this.notify('自动上传已关闭。待自动上传的文件已暂停，手动选择的文件可继续发送。')
   }
 
   async addSelected(uris: string[], kind: MediaKind): Promise<SelectedResult> {
@@ -408,7 +408,8 @@ export class Relay {
           break
         }
         const next = this.state.items.find((item: UploadItem): boolean =>
-          item.target === endpoint && item.state === 'pending' && item.retryAt <= readyAt)
+          item.target === endpoint && item.state === 'pending' && item.retryAt <= readyAt &&
+          (item.staged || this.state.autoSince > 0))
         if (next === undefined) {
           break
         }
